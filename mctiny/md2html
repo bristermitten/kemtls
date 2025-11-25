@@ -1,0 +1,25 @@
+#!/bin/sh
+
+echo '<html>'
+echo '<head>'
+echo '<meta http-equiv="content-type" content="text/html; charset=utf-8">'
+echo '<meta name="viewport" content="width=device-width, initial-scale=1">'
+echo '<style type="text/css">'
+echo 'body{font-family:sans-serif}'
+echo 'p{font-size:1.0em;line-height:1.6em}'
+echo 'blockquote{font-size:1.0em;line-height:1.6em}'
+echo 'pre{font-size:1.0em;line-height:1.6em}'
+echo 'code{font-size:1.3em}'
+echo 'li{margin-top:0;line-height:1.6em}'
+echo 'li:first-child{margin-top:0}'
+echo 'h1{font-size:1.6em}'
+echo 'h2{font-size:1.4em}'
+echo 'h3{font-size:1.2em}'
+echo '</style>'
+echo '</head>'
+echo '<body>'
+
+pandoc -f markdown
+
+echo '</body>'
+echo '</html>'

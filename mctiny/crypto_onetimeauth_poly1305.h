@@ -1,0 +1,14 @@
+#ifndef CRYPTO_ONETIMEAUTH_POLY1305_H
+#define CRYPTO_ONETIMEAUTH_POLY1305_H
+
+#include "tweetnacl.h"
+
+// Map Constants
+#define crypto_onetimeauth_poly1305_BYTES crypto_onetimeauth_poly1305_tweet_BYTES
+#define crypto_onetimeauth_poly1305_KEYBYTES crypto_onetimeauth_poly1305_tweet_KEYBYTES
+
+// Map Functions
+#define crypto_onetimeauth_poly1305 crypto_onetimeauth_poly1305_tweet
+#define crypto_onetimeauth_poly1305_verify crypto_onetimeauth_poly1305_tweet_verify
+
+#endif
