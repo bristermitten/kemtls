@@ -21,12 +21,11 @@
         ghciwatch
       ];
 
-      # Use self'.packages.mctiny to refer to the sibling definition
-      buildInputs = [ self'.packages.mctiny ];
+      buildInputs = [ pkgs.mctiny ];
 
       shellHook = ''
-        export LD_LIBRARY_PATH=${self'.packages.mctiny}/lib:$LD_LIBRARY_PATH
-        export DYLD_LIBRARY_PATH=${self'.packages.mctiny}/lib:$DYLD_LIBRARY_PATH
+        export LD_LIBRARY_PATH=${pkgs.mctiny}/lib:$LD_LIBRARY_PATH
+        export DYLD_LIBRARY_PATH=${pkgs.mctiny}/lib:$DYLD_LIBRARY_PATH
       '';
     };
   };

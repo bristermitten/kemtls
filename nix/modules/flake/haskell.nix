@@ -37,6 +37,8 @@
       settings = {
         kemtls = {
           stan = true;
+          librarySystemDepends = [ pkgs.mctiny ];
+          extraLibraries = [ pkgs.mctiny ];
           # haddock = false;
         };
         /*
