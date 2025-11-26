@@ -15,3 +15,7 @@ result-*
 
 
 mctiny/*.o
+mctiny/mctiny-master
+mctiny/mctiny-client
+mctiny/mctiny-server
+mctiny/state/**
