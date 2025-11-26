@@ -57,7 +57,7 @@ LIB_TARGET = libmctiny.$(LIB_EXT)
 CC=$(CC_NEW) $(CFLAGS_NEW)
 
 
-default: $(LIB_TARGET) mctiny-test
+default: $(LIB_TARGET) mctiny-test mctiny-master mctiny-server mctiny-client
 
 documentation: \
 	README.html \
@@ -86,14 +86,12 @@ $(LIB_TARGET): $(MCTINY_OBJS) $(MATH_OBJS) $(BRIDGE_OBJS)
 
 ### COMMENTED OUT: Standalone executables we don't need for the Lib ###
 
-# mctiny-master: mctiny-master.o \
-# hash.o Makefile $(SUPERCOP)
-# 	$(CC) -o mctiny-master mctiny-master.o hash.o \
-# 	$(LIBS)
+mctiny-master: mctiny-master.o hash.o Makefile
+	$(CC) -o mctiny-master mctiny-master.o hash.o $(MATH_OBJS) $(BRIDGE_OBJS) $(LIBS)
 
-# mctiny-master.o: mctiny-master.c \
-# mctiny.h hash.h Makefile $(SUPERCOP)
-# 	$(CC) -c mctiny-master.c $(INCLUDE)
+mctiny-master.o: mctiny-master.c \
+mctiny.h hash.h Makefile
+	$(CC) -c mctiny-master.c $(INCLUDE)
 
 # mctiny-rotate: mctiny-rotate.o \
 # hash.o Makefile $(SUPERCOP)
@@ -104,25 +102,17 @@ $(LIB_TARGET): $(MCTINY_OBJS) $(MATH_OBJS) $(BRIDGE_OBJS)
 # mctiny.h hash.h Makefile $(SUPERCOP)
 # 	$(CC) -c mctiny-rotate.c $(INCLUDE)
 
-# mctiny-server: mctiny-server.o \
-# packet.o mctiny_sfun.o hash.o Makefile $(SUPERCOP)
-# 	$(CC) -o mctiny-server mctiny-server.o \
-# 	packet.o mctiny_sfun.o hash.o \
-# 	$(LIBS)
+mctiny-server: mctiny-server.o packet.o mctiny_sfun.o hash.o $(MATH_OBJS) $(BRIDGE_OBJS)
+	$(CC) -o mctiny-server mctiny-server.o packet.o mctiny_sfun.o hash.o $(MATH_OBJS) $(BRIDGE_OBJS)
 
-# mctiny-server.o: mctiny-server.c \
-# mctiny.h hash.h packet.h Makefile $(SUPERCOP)
-# 	$(CC) -c mctiny-server.c $(INCLUDE)
+mctiny-server.o: mctiny-server.c mctiny.h hash.h packet.h
+	$(CC) -c mctiny-server.c
 
-# mctiny-client: mctiny-client.o Makefile \
-# mctiny_cfun.o hash.o packet.o pacing.o $(SUPERCOP)
-# 	$(CC) -o mctiny-client mctiny-client.o \
-# 	mctiny_cfun.o hash.o packet.o pacing.o \
-# 	$(LIBS)
+mctiny-client: mctiny-client.o mctiny_cfun.o hash.o packet.o pacing.o $(MATH_OBJS) $(BRIDGE_OBJS)
+	$(CC) -o mctiny-client mctiny-client.o mctiny_cfun.o hash.o packet.o pacing.o $(MATH_OBJS) $(BRIDGE_OBJS)
 
-# mctiny-client.o: mctiny-client.c \
-# mctiny.h hash.h packet.h pacing.h Makefile $(SUPERCOP)
-# 	$(CC) -c mctiny-client.c $(INCLUDE)
+mctiny-client.o: mctiny-client.c mctiny.h hash.h packet.h pacing.h
+	$(CC) -c mctiny-client.c
 
 mctiny.html: mctiny.md md2html
 	./md2html < mctiny.md > mctiny.html
@@ -148,9 +138,8 @@ pacing.o: pacing.c Makefile
 packet.html: packet.md md2html
 	./md2html < packet.md > packet.html
 
-packet.o: packet.c Makefile $(SUPERCOP)
-	$(CC) -c packet.c \
-	$(INCLUDE)
+packet.o: packet.c Makefile
+	$(CC) -c packet.c
 
 hash.html: hash.md md2html
 	./md2html < hash.md > hash.html
@@ -168,4 +157,4 @@ hash.o: hash.c crypto_hash_shake256.h
 
 ### NEW: Clean rule for new objects ###
 clean:
-	rm -f *.o math/mceliece/*.o math/common/*.o *.dylib *.so mctiny.h mctiny-test
+	rm -f *.o math/mceliece/*.o math/common/*.o *.dylib *.so mctiny.h mctiny-test mctiny-server mctiny-client

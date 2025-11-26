@@ -11,7 +11,7 @@
 #include <netinet/udp.h>
 #include "randombytes.h"
 #include "crypto_verify_32.h"
-#include "cpucycles.h"
+// #include "cpucycles.h"
 #include "packet.h"
 #include "hash.h"
 #include "mctiny.h"
@@ -272,8 +272,7 @@ void serve(int s)
     clientaddrlen = sizeof clientaddr;
     udplen = recvfrom(s,udp,sizeof udp,0,(struct sockaddr *) &clientaddr,&clientaddrlen);
     if (udplen > sizeof udp) continue;
-
-    cycles -= cpucycles();
+    // cycles -= cpucycles();
 
     packet_incoming(udp,udplen);
     packet_extract(nonce,sizeof nonce);
@@ -351,10 +350,10 @@ void serve(int s)
     /* --- decrypt cookies and process query */
 
     if (phase == 1) {
-      cyclesselected -= cpucycles();
+      // cyclesselected -= cpucycles();
       mctiny_seed2e(e,seed);
       mctiny_eblock2syndrome(synd1,e,block,colpos);
-      cyclesselected += cpucycles();
+      // cyclesselected += cpucycles();
     } else if (phase == 2) {
       mctiny_seed2e(e,seed);
       mctiny_pieceinit(synd2,e,piecepos);
@@ -437,7 +436,7 @@ void serve(int s)
 
     packet_outgoing(udp,udplen);
 
-    cycles += cpucycles();
+    // cycles += cpucycles();
 
     sendto(s,udp,udplen,0,(struct sockaddr *) &clientaddr,clientaddrlen);
 
