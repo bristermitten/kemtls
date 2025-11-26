@@ -48,14 +48,18 @@ common shared
   build-depends:
     , aeson
     , async
-    , base          >=4   && <5
+    , base               >=4   && <5
+    , binary
+    , bytestring
     , data-default
     , directory
     , filepath
     , mtl
+    , network
+    , network-transport
     , optics-core
     , profunctors
-    , relude        >=1.0
+    , relude             >=1.0
     , shower
     , time
     , with-utf8
@@ -67,4 +71,7 @@ executable kemtls
   import:          shared
   main-is:         Main.hs
   extra-libraries: mctiny
-  other-modules:   McTiny
+  other-modules:
+    McTiny
+    Packet
+    Server
