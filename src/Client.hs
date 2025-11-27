@@ -32,12 +32,12 @@ sendPacket client packet = do
     packetData <- putPacket secret packet
     sendAll sock packetData
 
-recvPacket :: (McTinyPacket a) => KemtlsClient -> IO a
+recvPacket :: forall a. (McTinyPacket a, KnownNat (PacketSize a)) => KemtlsClient -> IO a
 recvPacket client = do
     let sock = clientSocket client
     let secret = ss client
-    -- assuming max packet size of 2048 bytes
-    packetData <- recv sock 2048
+
+    packetData <- recv sock (fromIntegral $ natVal $ Proxy @(PacketSize a))
     getPacket secret packetData
 
 closeClient :: KemtlsClient -> IO ()

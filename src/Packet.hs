@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Packet where
 
@@ -119,6 +120,7 @@ data McTinyC2SPacket
         }
 
 class McTinyPacket a where
+    type PacketSize a :: Nat
     putPacket :: SharedSecret -> a -> IO LBS.ByteString
     getPacket :: SharedSecret -> LBS.ByteString -> IO a
 
@@ -167,6 +169,7 @@ data Reply0 = Reply0
     deriving stock (Show)
 
 instance McTinyPacket Reply0 where
+    type PacketSize Reply0 = CookieC0Bytes + 16 + PacketNonceBytes
     putPacket ss (Reply0 cookie nonce) = do
         encrypted <- encryptPacketData cookie nonce ss
         putStrLn "Reply0 packet encrypted"

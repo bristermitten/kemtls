@@ -2,12 +2,11 @@ module ClientMain where
 
 import Client (closeClient, kemtlsClient, recvPacket, sendPacket)
 import Control.Exception qualified as E
-import Crypto.Random
-import Data.ByteString qualified as BS
 import McTiny
 import Packet
 import Paths
 import SizedByteString
+import SizedByteString qualified as SizedBS
 
 main :: IO ()
 main = do
@@ -43,3 +42,13 @@ main = do
         packet <- recvPacket @Reply0 client
 
         putStrLn $ "Received Reply0 packet: " ++ show packet
+
+        -- decode cookie
+        let cookie = r0Cookie0 packet
+        let longTermNonce = r0Nonce packet
+
+        putStrLn $ "Stored Opaque Cookie (" ++ show (SizedBS.sizedLength cookie) ++ " bytes)"
+        putStrLn "Handshake Phase 0 Complete."
+        putStrLn $ "Long term nonce: " ++ show longTermNonce
+
+        guard (SizedBS.index @22 longTermNonce == 1 && SizedBS.index @23 longTermNonce == 0)
