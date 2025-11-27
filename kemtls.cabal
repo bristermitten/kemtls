@@ -75,6 +75,7 @@ library
     McTiny
     Packet
     Paths
+    SizedByteString
     Utils
 
 executable server
@@ -82,7 +83,9 @@ executable server
   main-is:       ServerMain.hs
   ghc-options:   -main-is ServerMain
   build-depends: kemtls
-  other-modules: Server
+  other-modules:
+    Server
+    Server.State
 
 executable client
   import:        shared

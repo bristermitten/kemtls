@@ -9,6 +9,7 @@
         "Keypair",
         "malloc",
         "mceliece",
+        "mempty",
         "memset",
         "packetformat"
     ]

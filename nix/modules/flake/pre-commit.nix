@@ -20,7 +20,7 @@
     };
 
     fourmolu.settings = {
-      indentation = 2;
+      indentation = 4;
       comma-style = "leading";
       record-brace-space = true;
       indent-wheres = true;
