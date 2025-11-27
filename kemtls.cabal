@@ -92,7 +92,9 @@ executable client
   main-is:       ClientMain.hs
   build-depends: kemtls
   ghc-options:   -main-is ClientMain
-  other-modules: Client
+  other-modules:
+    Client
+    Client.State
 
 executable initialise
   import:        shared

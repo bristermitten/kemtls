@@ -1,5 +1,6 @@
 module Client where
 
+import Client.State
 import Control.Exception qualified as E
 import McTiny
 import Network.Socket
@@ -9,14 +10,17 @@ import Packet (McTinyC2SPacket, McTinyPacket (..))
 data KemtlsClient = KemtlsClient
     { clientSocket :: Socket
     , ss :: SharedSecret -- the result of ENC(pk),
+    , clientState :: ClientState
     }
+
+type ClientM = StateT ClientState IO
 
 kemtlsClient :: Maybe HostName -> ServiceName -> SharedSecret -> IO KemtlsClient
 kemtlsClient mhost port ss = do
     addr <- resolve
     sock <- open addr
     putStrLn $ "Connected to server on port " <> port <> " on host " <> show addr
-    return $ KemtlsClient sock ss
+    return $ KemtlsClient sock ss Initial
     where
         resolve = do
             let hints = defaultHints {addrSocketType = Stream}

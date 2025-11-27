@@ -1,7 +1,8 @@
 module ClientMain where
 
-import Client (closeClient, kemtlsClient, recvPacket, sendPacket)
+import Client (KemtlsClient, closeClient, kemtlsClient, recvPacket, sendPacket)
 import Control.Exception qualified as E
+import Foreign (ForeignPtr)
 import McTiny
 import Packet
 import Paths
