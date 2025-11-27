@@ -121,14 +121,14 @@ data McTinyC2SPacket
 
 class McTinyPacket a where
     type PacketSize a :: Nat
-    putPacket :: SharedSecret -> a -> IO LBS.ByteString
-    getPacket :: SharedSecret -> LBS.ByteString -> IO a
+    putPacket :: (MonadIO m, Alternative m) => SharedSecret -> a -> m LBS.ByteString
+    getPacket :: (MonadIO m, Alternative m) => SharedSecret -> LBS.ByteString -> m a
 
 instance McTinyPacket McTinyC2SPacket where
     putPacket ss (Query0 nonce pkHash ct exts) = do
         guard (null exts) -- no extensions supported
         -- 512 0 bytes for extensions gets sent encrypted
-        encrypted <- encryptPacketData (SizedBS.replicate @PacketExtensionsBytes 0) nonce ss
+        encrypted <- liftIO $ encryptPacketData (SizedBS.replicate @PacketExtensionsBytes 0) nonce ss
         putStrLn "Packet encrypted"
         putStrLn $ "Packet Info: " ++ show (SizedBS.sizedLength nonce, SizedBS.sizedLength pkHash, SizedBS.sizedLength ct, SizedBS.sizedLength encrypted)
         pure $ runPut $ do
@@ -152,7 +152,7 @@ instance McTinyPacket McTinyC2SPacket where
         -- make sure last 2 bytes of nonce are zero
         guard (SizedBS.index @22 nonce == 0 && SizedBS.index @23 nonce == 0)
 
-        decrypted <- decryptPacketData encrypted nonce ss
+        decrypted <- liftIO $ decryptPacketData encrypted nonce ss
 
         pure $
             Query0
@@ -171,7 +171,7 @@ data Reply0 = Reply0
 instance McTinyPacket Reply0 where
     type PacketSize Reply0 = CookieC0Bytes + 16 + PacketNonceBytes
     putPacket ss (Reply0 cookie nonce) = do
-        encrypted <- encryptPacketData cookie nonce ss
+        encrypted <- liftIO $ encryptPacketData cookie nonce ss
         putStrLn "Reply0 packet encrypted"
         putStrLn $ "Reply0 Packet Info: " ++ show (SizedBS.sizedLength encrypted, SizedBS.sizedLength nonce)
         pure $ runPut $ do
@@ -187,7 +187,7 @@ instance McTinyPacket Reply0 where
                         pure (encryptedCookie, nonce)
                     )
                     input
-        decryptedCookie <- decryptPacketData encryptedCookie nonce ss
+        decryptedCookie <- liftIO $ decryptPacketData encryptedCookie nonce ss
         pure $
             Reply0
                 { r0Cookie0 = decryptedCookie

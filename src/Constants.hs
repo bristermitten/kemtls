@@ -81,3 +81,21 @@ packetExtensionsBytes = packet_ExtensionsBytes
 
 type PacketExtensionsBytes :: Nat
 type PacketExtensionsBytes = packet_ExtensionsBytes
+
+#define mcTiny_params_l 8
+-- mctiny_COLBLOCKS
+-- i.e. how many columns in the McTiny matrix
+mcTinyL :: (Num a) => a
+mcTinyL = mcTiny_params_l
+
+type McTinyL :: Nat
+type McTinyL = mcTiny_params_l
+
+#define mcTiny_params_r 119
+-- mctiny_ROWBLOCKS
+-- i.e. how many rows in the McTiny matrix
+mcTinyR :: (Num a) => a
+mcTinyR = mcTiny_params_r
+
+type McTinyR :: Nat
+type McTinyR = mcTiny_params_r

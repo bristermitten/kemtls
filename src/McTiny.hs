@@ -6,7 +6,6 @@
 module McTiny where
 
 import Constants
-import Crypto.Random
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal
 import Data.ByteString.Internal qualified as BS (create)
@@ -130,11 +129,11 @@ Produces a bytestring of length (16 + payload length)
 nicer version of the packet_encrypt function in packet.c
 -}
 encryptPacketData ::
-    (KnownNat payloadLen, KnownNat (16 + payloadLen)) =>
+    (KnownNat payloadLen, KnownNat (payloadLen + 16)) =>
     SizedByteString payloadLen ->
     SizedByteString PacketNonceBytes ->
     SizedByteString HashBytes ->
-    IO (SizedByteString (16 + payloadLen))
+    IO (SizedByteString (payloadLen + 16))
 encryptPacketData payloadBS nonceBS keyBS = do
     let payloadLen = sizedLength payloadBS
         totalLen = hashBytes + payloadLen
