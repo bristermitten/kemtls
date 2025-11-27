@@ -1,2 +1,22 @@
 cradle:
   cabal:
+    - path: "./"
+      component: "lib:kemtls"
+
+    - path: "./ServerMain.hs"
+      component: "kemtls:exe:server"
+
+    - path: "./Server.hs"
+      component: "kemtls:exe:server"
+
+    - path: "./ServerMain.hs"
+      component: "kemtls:exe:server"
+
+    - path: "./ClientMain.hs"
+      component: "kemtls:exe:client"
+
+    - path: "./Client.hs"
+      component: "kemtls:exe:client"
+
+    - path: "./InitialiseMain.hs"
+      component: "kemtls:exe:initialise"

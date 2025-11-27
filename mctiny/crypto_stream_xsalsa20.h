@@ -7,8 +7,4 @@
 #define crypto_stream_xsalsa20_KEYBYTES crypto_stream_xsalsa20_tweet_KEYBYTES
 #define crypto_stream_xsalsa20_NONCEBYTES crypto_stream_xsalsa20_tweet_NONCEBYTES
 
-// McTiny Function -> TweetNaCl Function
-// TweetNaCl's "crypto_stream_xor" IS XSalsa20
-#define crypto_stream_xsalsa20_xor crypto_stream_xsalsa20_tweet_xor
-
 #endif

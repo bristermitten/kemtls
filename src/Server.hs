@@ -3,19 +3,23 @@ module Server where
 import Control.Concurrent (forkFinally)
 import Control.Exception qualified as E
 
+import Control.Monad.Except (throwError)
+import Crypto.Random
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put (runPut)
 import Data.Bits
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import McTiny (McElieceSecretKey, decap, decryptPacketData)
 import Network.Socket
 import Network.Socket.ByteString.Lazy
 import Network.Transport.Internal (decodeNum16)
 import Packet
-import Control.Monad.Except (throwError)
+import Utils
 
-kemtlsServer :: Maybe HostName -> ServiceName -> IO ()
-kemtlsServer mhost port = do
+kemtlsServer :: Maybe HostName -> ServiceName -> McElieceSecretKey -> IO ()
+kemtlsServer mhost port serverSecretKey = do
   addr <- resolve
 
   vacuous $ E.bracket (open addr) close loop
@@ -25,6 +29,7 @@ kemtlsServer mhost port = do
             defaultHints
               { addrFlags = [AI_PASSIVE]
               , addrSocketType = Stream
+              , addrProtocol = 6 -- TCP
               }
       head <$> getAddrInfo (Just hints) mhost (Just port)
     open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
@@ -47,29 +52,42 @@ kemtlsServer mhost port = do
 
     server conn = do
       putStrLn "Client connected"
+      do
+        p <- runExceptT $ do
+          encryptedExtensions <- liftIO $ recv conn (512 + 16)
+          expect (not $ LBS.null encryptedExtensions) "Failed to read extensions from client"
+          putStrLn "Received valid MAC and extensions from client"
+          pkHash <- liftIO $ recv conn 32
+          expect (LBS.length pkHash == 32) "Failed to read public key hash from client"
+          ct <- liftIO $ recv conn 226
+          expect (LBS.length ct == 226) "Failed to read ciphertext from client"
+          nonce <- liftIO $ recv conn 24
+          expect (LBS.length nonce == 24) "Failed to read nonce from client"
+          expect (nonce `LBS.index` 22 == 0 && nonce `LBS.index` 23 == 0) "Invalid nonce received from client"
 
-      p <- acceptPacket @ClientHello conn
+          s <- liftIO $ decap serverSecretKey (fromLazy ct)
+          putStrLn $ "Decapsulated shared secret: " ++ show s
 
-      case p of
-        Left err -> putStrLn $ "Failed to parse ClientHello" ++ show err
-        Right ch -> do
-          putStrLn $ "Received ClientHello: " ++ show ch
-          -- Echo back the same ClientHello for demonstration
-          pass
+          extensions <- liftIO $ decryptPacketData (fromLazy encryptedExtensions) (fromLazy nonce) s
+          putStrLn $ "Decrypted extensions: " ++ show extensions
+          -- assert that extensions are 512 zero bytes
+          expect (extensions == BS.replicate 512 0) "Invalid extensions received from client"
 
--- read a TLS packet
-acceptPacket :: forall a. (TLSRecord a) => Socket -> IO (Either Text a)
-acceptPacket sock = runExceptT $ do
-  -- a <- lift $ recv sock 3
-  -- error $ "Received data: " <> decodeUtf8 a
-  contentType <- lift $ recv sock 1
-  expect (contentType == "\x16") ("Invalid Handshake:" <> decodeUtf8 contentType) -- Handshake type
-  version <- lift $ recv sock 2
-  expect (version == "\x03\x01") "Invalid Version" -- TLS 1.3
-  lenBs <- lift $ recv sock 2
-  let len = decodeNum16 (fromLazy lenBs)
-  payload <- lift $ recv sock len
-  pure $ runGet (Data.Binary.get @a) payload
+          drg <- liftIO getSystemDRG
+          -- generate 176 random binary bits || 0, 0 for ClientHello.random
+          let (randomBytes :: ByteString, drg') = withRandomBytes drg (176 `div` 8) $ \bs ->
+                bs <> BS.pack [0, 0] -- last 2 bytes zeroed
+          putStrLn $ "Generated Reply0.random: " ++ show randomBytes
+
+          -- generate 32 byte seed
+          let (seed :: ByteString, drg'') = withRandomBytes drg' 32 id
+
+          putStrLn $ "Generated Reply0.seed: " ++ show seed
+
+        case p of
+          Left err -> putStrLn $ "Failed to parse Query: " ++ show err
+          Right ch -> do
+            putStrLn $ "Received Query: " ++ show ch
 
 expect :: Bool -> Text -> ExceptT Text IO ()
 expect True _ = pass
@@ -85,7 +103,3 @@ sendPacket sock pkt = do
           <> encodeNum16 len -- TLS 1.3
           -- Length
   sendAll sock (header <> payload)
-
-encodeNum16 :: Word16 -> LBS.ByteString
-encodeNum16 w =
-  LBS.pack [fromIntegral (w `shiftR` 8), fromIntegral w]

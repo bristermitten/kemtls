@@ -1,10 +1,15 @@
 {
     "files.associations": {
         "flake.lock": "json",
-        "mctiny.h": "c"
+        "mctiny.h": "c",
+        "tweetnacl.h": "c"
     },
     "cSpell.words": [
+        "Ciphertext",
         "Keypair",
-        "mceliece"
+        "malloc",
+        "mceliece",
+        "memset",
+        "packetformat"
     ]
 }

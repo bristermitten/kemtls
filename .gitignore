@@ -14,8 +14,13 @@ result-*
 /.pre-commit-config.yaml
 
 
-mctiny/*.o
+mctiny/**/*.o
 mctiny/mctiny-master
 mctiny/mctiny-client
 mctiny/mctiny-server
+mctiny/mctiny-test
 mctiny/state/**
+mctiny/*.dylib
+
+
+state/**

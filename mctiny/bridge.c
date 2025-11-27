@@ -4,6 +4,7 @@
 #include "math/mceliece/operations.h"
 #include "math/mceliece/api.h"
 #include "math/common/fips202.h"
+#include "tweetnacl.h"
 
 // 1. Bridge for Classic McEliece 6960119
 // We map the McTiny function names to the PQClean implementation
@@ -54,6 +55,21 @@ int crypto_hash_shake256(unsigned char *out, const unsigned char *in, unsigned l
     // We request 32 bytes (crypto_hash_shake256_BYTES)
     shake256(out, 32, in, inlen);
     return 0;
+}
+
+
+// since `crypto_stream_xsalsa20_xor` is defined as a macro
+// the haskell FFI cant bind to it directly
+// so we define this alias (very stupid)
+int bridge_crypto_stream_xsalsa20_xor(unsigned char *c,const unsigned char *m,unsigned long long mlen,const unsigned char *n,const unsigned char *k)
+{
+    return crypto_stream_xsalsa20_xor(c, m, mlen, n, k);
+}
+
+// ditto
+int bridge_crypto_onetimeauth_poly1305(unsigned char *out,const unsigned char *in,unsigned long long inlen,const unsigned char *k)
+{
+    return crypto_onetimeauth_poly1305(out, in, inlen, k);
 }
 
 // Helper comparator for qsort
