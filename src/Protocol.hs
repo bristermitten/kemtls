@@ -3,11 +3,9 @@
 module Protocol where
 
 import Data.ByteString.Lazy qualified as LBS
-import GHC.TypeLits (type (+))
 import Network.Socket
 import Network.Socket.ByteString.Lazy
 import Packet
-import SizedByteString
 
 recvPacket ::
     forall a m.
