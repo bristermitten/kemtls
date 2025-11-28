@@ -3,6 +3,7 @@ module ClientMain where
 import Client
 import Client.State
 import Constants (mcTinyColBlocks, mcTinyRowBlocks)
+import Data.ByteString qualified as BS
 import McTiny
 import Packet
 import Paths
@@ -81,17 +82,21 @@ runPhase1 = do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
             liftIO $ putStrLn $ "Processing block (" ++ show rowPos ++ ", " ++ show colPos ++ ")"
             block <- liftIO $ pk2Block pk rowPos colPos
-            liftIO $ putStrLn $ "Retrieved block: " ++ show block
 
             let packetNonce =
                     SizedBS.take @22 nonce
                         `snocSized` fromIntegral (2 * (rowPos - 1))
                         `snocSized` fromIntegral (64 + colPos - 1)
 
-            let packet =
+            let suffix = BS.drop 22 (fromSized packetNonce)
+            liftIO $ putStrLn $ "Client sending nonce Suffix: " ++ show suffix
+            let queryPacket =
                     Query1
                         block
                         packetNonce
                         cookie
 
-            sendPacket packet
+            sendPacket queryPacket
+            receivedPacket <- readPacket @Reply1
+
+            liftIO $ putStrLn $ "Received Reply1 packet: " ++ show receivedPacket

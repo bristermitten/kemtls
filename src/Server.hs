@@ -5,23 +5,17 @@ import Control.Exception qualified as E
 
 import Constants
 import Control.Monad.Except (MonadError, throwError)
+import Cookie
 import Crypto.Random
-import Data.Binary
-import Data.Binary.Get
-import Data.Binary.Put (runPut)
-import Data.Bits
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import GHC.TypeLits (type (+))
-import McTiny (McElieceSecretKey, SharedSecret, createCookie0, decap, decryptPacketData)
+import McTiny (McElieceSecretKey, computePartialSyndrome, seedToE)
 import Network.Socket
 import Network.Socket.ByteString.Lazy
-import Network.Transport.Internal (decodeNum16)
 import Packet
 import Protocol qualified
 import Server.State
 import SizedByteString as SizedBS
-import Utils
 
 type ServerEnv = MVar ServerState
 type ConnectionM = ReaderT ServerEnv (StateT ClientInfo IO)
@@ -71,7 +65,7 @@ kemtlsServer mhost port serverSecretKey = do
                     (runStateT (runReaderT handleConnection stateVar) clientLocalState)
                     ( \result -> do
                         case result of
-                            Left ex -> putStrLn $ "Thread crashed: " ++ show ex
+                            Left ex -> putStrLn $ "Thread crashed:\n" <> displayException ex
                             Right _ -> putStrLn "Thread finished normally"
                         cleanupClient stateVar cid conn
                     )
@@ -162,7 +156,41 @@ processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
+    let ss = case clientState client of
+            SentReply0 secret -> secret
+            _ -> error "Invalid client state in processQuery1"
+
+    for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
+        for_ [1 .. mcTinyColBlocks] $ \colPos -> do
+            _packet <- lift $ Protocol.recvPacket @Query1 conn ss
+
+            let cookie = q1Cookie0 _packet
+
+            globalState <- lift getGlobalState
+
+            (s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) cookie (q1Nonce _packet)
+            -- we now have the shared secret s and _seed_ E
+
+            -- compute c_i,j
+            syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
+            print syndrome
+
+            (cookie1, nonce1) <- liftIO $ createCookie1 (cookieSecretKey globalState) syndrome (q1Nonce _packet) rowPos colPos 0
+
+            let reply =
+                    Reply1
+                        { r1Cookie0 = q1Cookie0 _packet
+                        , r1Cookie1 = cookie1
+                        , r1Nonce = nonce1
+                        }
+            liftIO $ sendPacket client ss reply
+            liftIO $ putStrLn $ "Processed Block (" ++ show rowPos ++ "," ++ show colPos ++ ")"
     pass
+
+getGlobalState :: ConnectionM ServerState
+getGlobalState = do
+    stateVar <- ask
+    liftIO $ readMVar stateVar
 
 sendPacket :: (McTinyPacket a, KnownNat (PacketSize a)) => ClientInfo -> PacketPutContext a -> a -> IO ()
 sendPacket client context packet = do
@@ -173,30 +201,3 @@ sendPacket client context packet = do
 expect :: (MonadError e f) => Bool -> e -> f ()
 expect True _ = pass
 expect False errMsg = throwError errMsg
-
--- readPacket :: forall a. (McTinyPacket a, KnownNat (PacketSize a)) => ConnectionM a
--- readPacket = do
---     client <- Prelude.get
---     let sock = clientSocket client
---     let sharedSecret = case clientState client of
---             SentReply0 ss -> ss
---             _ -> undefined -- the packet sometimes doesnt need a shared secret
---     Protocol.recvPacket @a sock sharedSecret
-
-recvExact :: forall i m. (MonadIO m, KnownNat i) => Socket -> m (SizedLazyByteString i)
-recvExact sock = do
-    let totalBytes = fromIntegral (natVal (Proxy @i))
-    received <- liftIO $ recvExact' sock totalBytes LBS.empty
-    case mkSized received of
-        Just sized -> return sized
-        Nothing -> error "Received incorrect number of bytes"
-    where
-        recvExact' :: Socket -> Int -> LBS.ByteString -> IO LBS.ByteString
-        recvExact' _ 0 acc = return acc
-        recvExact' s n acc = do
-            chunk <- recv s (fromIntegral n)
-            if LBS.null chunk
-                then error "Not enough data received"
-                else do
-                    let restLen = n - fromIntegral (LBS.length chunk)
-                    recvExact' s restLen (acc `LBS.append` chunk)

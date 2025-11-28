@@ -101,4 +101,3 @@ executable initialise
   main-is:       InitialiseMain.hs
   build-depends: kemtls
   ghc-options:   -main-is InitialiseMain
-  other-modules: InitialiseMain

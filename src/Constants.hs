@@ -75,12 +75,19 @@ cookieSeedBytes = cookie_seedBytes
 type CookieSeedBytes :: Nat
 type CookieSeedBytes = cookie_seedBytes
 
-#define cookie_c0_Bytes 81
+#define mctiny_COOKIE0BYTES 81
 cookieC0Bytes :: (Num a) => a
-cookieC0Bytes = cookie_c0_Bytes
+cookieC0Bytes = mctiny_COOKIE0BYTES
 
 type CookieC0Bytes :: Nat
-type CookieC0Bytes = cookie_c0_Bytes
+type CookieC0Bytes = mctiny_COOKIE0BYTES
+
+#define mctiny_COOKIEBLOCKBYTES 19
+cookie1BlockBytes :: (Num a) => a
+cookie1BlockBytes = mctiny_COOKIEBLOCKBYTES
+
+type Cookie1BlockBytes :: Nat
+type Cookie1BlockBytes = mctiny_COOKIEBLOCKBYTES
 
 #define packet_ExtensionsBytes 512
 packetExtensionsBytes :: (Num a) => a
@@ -115,3 +122,17 @@ type McTinyEncryptionHeaderBytes :: Nat
 type McTinyEncryptionHeaderBytes = mcTiny_encryption_headerBytes
 
 type EncryptedSize n = n + McTinyEncryptionHeaderBytes
+
+#define mctiny_EBYTES 870
+mctinyErrorVectorBytes :: (Num a) => a
+mctinyErrorVectorBytes = mctiny_EBYTES
+
+type McTinyErrorVectorBytes :: Nat
+type McTinyErrorVectorBytes = mctiny_EBYTES
+
+#define mctiny_YBYTES 2
+mctinySyndromeBytes :: (Num a) => a
+mctinySyndromeBytes = mctiny_YBYTES
+
+type McTinySyndromeBytes :: Nat
+type McTinySyndromeBytes = mctiny_YBYTES

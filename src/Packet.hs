@@ -119,6 +119,7 @@ data Query1
     , q1Nonce :: SizedByteString PacketNonceBytes -- should be 24 bytes long with last 2 bytes encapsulating row and col
     , q1Cookie0 :: SizedByteString CookieC0Bytes
     }
+    deriving stock (Show)
 
 class McTinyPacket a where
     type PacketSize a :: Nat
@@ -243,4 +244,42 @@ instance McTinyPacket Reply0 where
             Reply0
                 { r0Cookie0 = decryptedCookie
                 , r0Nonce = nonce
+                }
+
+data Reply1 = Reply1
+    { r1Cookie0 :: SizedByteString CookieC0Bytes
+    , r1Cookie1 :: SizedByteString Cookie1BlockBytes
+    , r1Nonce :: SizedByteString PacketNonceBytes
+    }
+    deriving stock (Show)
+
+instance McTinyPacket Reply1 where
+    type PacketSize Reply1 = EncryptedSize (CookieC0Bytes + Cookie1BlockBytes) + PacketNonceBytes
+    type PacketPutContext Reply1 = SharedSecret
+    type PacketGetContext Reply1 = SharedSecret
+    type PacketGetResult Reply1 = Reply1
+
+    putPacket ss (Reply1 cookie0 cookie1 nonce) = do
+        let payload = cookie0 `appendSized` cookie1
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedPayload, nonce) =
+                runGet
+                    ( do
+                        encryptedPayload <- getSizedByteString @(EncryptedSize (CookieC0Bytes + Cookie1BlockBytes))
+                        nonce <- getSizedByteString @PacketNonceBytes
+                        pure (encryptedPayload, nonce)
+                    )
+                    input
+        decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
+        let (cookie0, cookie1) = SizedBS.splitAt @CookieC0Bytes decryptedPayload
+        pure $
+            Reply1
+                { r1Cookie0 = cookie0
+                , r1Cookie1 = cookie1
+                , r1Nonce = nonce
                 }

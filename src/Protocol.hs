@@ -19,8 +19,17 @@ recvPacket sock secret = do
     let size = fromIntegral $ natVal (Proxy @(PacketSize a))
 
     -- Read exact bytes
-    packetData <- liftIO $ recv sock size
-    liftIO $ getPacket @a secret packetData
+    packetData <- liftIO $ recvExact sock size
+    if LBS.length packetData /= size
+        then
+            error $
+                "Packet size mismatch in recvPacket! Expected "
+                    <> show size
+                    <> " bytes, but got "
+                    <> show (LBS.length packetData)
+                    <> " bytes."
+        else
+            liftIO $ getPacket @a secret packetData
 
 sendPacket :: forall a. (McTinyPacket a, KnownNat (PacketSize a)) => Socket -> PacketPutContext a -> a -> IO ()
 sendPacket sock secret packet = do
@@ -33,3 +42,16 @@ sendPacket sock secret packet = do
                 <> show (LBS.length packetData)
                 <> " bytes."
     sendAll sock packetData
+
+recvExact :: (MonadIO m) => Socket -> Int64 -> m LBS.ByteString
+recvExact sock n = liftIO $ go n
+    where
+        go 0 = return LBS.empty
+        go remaining = do
+            chunk <- recv sock remaining
+            if LBS.null chunk
+                then error "Connection closed prematurely (recvExact)"
+                else do
+                    let len = LBS.length chunk
+                    rest <- go (remaining - len)
+                    return (chunk `LBS.append` rest)

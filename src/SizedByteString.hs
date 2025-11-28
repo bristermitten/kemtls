@@ -9,7 +9,7 @@ import Data.Binary.Put
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Type.Ord (type (<), type (<=))
-import GHC.TypeLits (type (+))
+import GHC.TypeLits (type (+), type (-))
 
 newtype SizedByteString (n :: Nat) = SizedByteString {getSized :: BS.ByteString}
     deriving newtype (Eq, Show, Binary)
@@ -47,6 +47,7 @@ class ByteStringLike t where
     bsAtIndex :: t -> Int -> Word8
 
     bsTake :: Int -> t -> t
+    bsSplitAt :: Int -> t -> (t, t)
 
 instance ByteStringLike BS.ByteString where
     toByteString = id
@@ -55,6 +56,7 @@ instance ByteStringLike BS.ByteString where
     bsReplicate len = BS.replicate (fromIntegral len)
     bsAtIndex = BS.index
     bsTake = BS.take
+    bsSplitAt = BS.splitAt
 instance ByteStringLike LBS.ByteString where
     toByteString = toStrict
     fromByteString = fromStrict
@@ -62,6 +64,7 @@ instance ByteStringLike LBS.ByteString where
     bsReplicate = LBS.replicate
     bsAtIndex lbs i = LBS.index lbs (fromIntegral i)
     bsTake n = LBS.take (fromIntegral n)
+    bsSplitAt n = LBS.splitAt (fromIntegral n)
 
 class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
     type Impl t
@@ -105,6 +108,12 @@ take sized =
         len = natToNum @m @Int
      in unsafeMkSized (bsTake len bs)
 
+splitAt :: forall m n t. (KnownNat m, KnownNat n, m <= n, SizedString t n, SizedString t m, SizedString t (n - m)) => t n -> (t m, t (n - m))
+splitAt sized =
+    let bs = fromSized sized
+        len = natToNum @m @Int
+        (bs1, bs2) = bsSplitAt len bs
+     in (unsafeMkSized bs1, unsafeMkSized bs2)
 natToNum :: forall n num. (KnownNat n, Num num) => num
 natToNum = fromIntegral (natVal (Proxy @n))
 

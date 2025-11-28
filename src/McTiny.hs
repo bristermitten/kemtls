@@ -11,8 +11,9 @@ import Data.ByteString.Internal
 import Data.ByteString.Internal qualified as BS (create)
 import Foreign
 import Foreign.C.Types
-import GHC.TypeLits (type (+))
+import GHC.TypeLits (type (+), type (-))
 import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, randomSized, sizedLength)
+import SizedByteString qualified as SizedBS
 
 -- int crypto_kem_mceliece6960119_keypair(unsigned char *pk, unsigned char *sk);
 foreign import ccall safe "crypto_kem_mceliece6960119_keypair"
@@ -45,6 +46,14 @@ foreign import ccall safe "crypto_hash_shake256"
 -- void mctiny_pk2block(unsigned char *out,const unsigned char *pk,int rowpos,int colpos)
 foreign import ccall safe "mctiny_pk2block"
     c_mctiny_pk2block :: Ptr Word8 -> Ptr Word8 -> CInt -> CInt -> IO ()
+
+-- void mctiny_seed2e(unsigned char *e,const unsigned char *seed)
+foreign import ccall safe "mctiny_seed2e"
+    c_mctiny_seed2e :: Ptr Word8 -> Ptr Word8 -> IO ()
+
+-- void mctiny_eblock2syndrome(unsigned char *s,const unsigned char *e,const unsigned char *block,int colpos)
+foreign import ccall safe "mctiny_eblock2syndrome"
+    c_mctiny_eblock2syndrome :: Ptr Word8 -> Ptr Word8 -> Ptr Word8 -> CInt -> IO ()
 
 -- | Generate a McEliece keypair
 generateKeypair :: IO McElieceKeypair
@@ -236,7 +245,15 @@ decryptPacketData encryptedBS nonceBS keyBS = do
                     -- compare computed tag with provided tag
                     BS.useAsCStringLen cipherTag \(tagPtr, tagLen) -> do
                         tagMatch <- memcmp computedTagPtr (castPtr tagPtr) (fromIntegral tagLen)
-                        when (tagMatch /= 0) $ error "Authentication failed: tags do not match"
+                        when (tagMatch /= 0) $ do
+                            expected <- BS.packCStringLen (tagPtr, tagLen)
+                            actual <- BS.packCStringLen (castPtr computedTagPtr, tagLen)
+                            error $
+                                "Authentication failed: tags do not match."
+                                    <> " Computed tag: "
+                                    <> show expected
+                                    <> " Provided tag: "
+                                    <> show actual
 
                 -- decrypt the ciphertext
                 decryptRes <-
@@ -296,30 +313,6 @@ publicKeyBytes (McEliecePublicKey fptr) = BS.create pkBytes $ \ptr ->
     withForeignPtr fptr $ \pkPtr ->
         copyBytes ptr pkPtr pkBytes
 
-{- | create the first cookie packet field
-corresponds to 'C0 <- (AE(S,E :N,1,0 : hash(s_m)),b)'  in the paper
--}
-createCookie0 ::
-    -- | server cookie key (s_m)
-    SizedByteString CookieSecretKeyBytes ->
-    -- | shared secret key (S)
-    SharedSecret ->
-    -- | seed (E)
-    SizedByteString CookieSeedBytes ->
-    -- | key id (0-7)
-    Word8 ->
-    -- | encoded cookie data
-    IO (SizedByteString CookieC0Bytes, SizedByteString PacketNonceBytes)
-createCookie0 kCookie kMaster seed keyId = do
-    encKey <- mctinyHash (fromSized kCookie) -- hash(s_m)
-    nonce <- randomSized @NonceRandomPartBytes >>= \r -> pure (r `snocSized` 1 `snocSized` 0) -- N,1,0
-    let payload = kMaster `appendSized` seed -- S, E
-    encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
-    return
-        ( encrypted `snocSized` keyId -- b
-        , nonce
-        )
-
 pk2Block ::
     McEliecePublicKey ->
     Int -> -- rowPos
@@ -330,3 +323,37 @@ pk2Block (McEliecePublicKey pkFPtr) rowPos colPos = do
         withForeignPtr pkFPtr $ \pkPtr -> do
             c_mctiny_pk2block outPtr pkPtr (fromIntegral rowPos) (fromIntegral colPos)
     return $ mkSizedOrError blockBS
+
+seedToE ::
+    SizedByteString CookieSeedBytes ->
+    IO (SizedByteString McTinyErrorVectorBytes)
+seedToE seedBS = do
+    eBS <- BS.create mctinyErrorVectorBytes $ \ePtr ->
+        BS.useAsCString (fromSized seedBS) $ \seedPtr -> do
+            c_mctiny_seed2e ePtr (castPtr seedPtr)
+    return $ mkSizedOrError eBS
+
+eBlockToSyndrome ::
+    SizedByteString McTinyErrorVectorBytes ->
+    SizedByteString McTinyBlockBytes ->
+    Int -> -- colPos
+    IO (SizedByteString McTinySyndromeBytes)
+eBlockToSyndrome eBS blockBS colPos = do
+    sBS <- BS.create mctinySyndromeBytes $ \sPtr ->
+        BS.useAsCString (fromSized eBS) \ePtr ->
+            BS.useAsCString (fromSized blockBS) \blockPtr -> do
+                c_mctiny_eblock2syndrome
+                    sPtr
+                    (castPtr ePtr)
+                    (castPtr blockPtr)
+                    (fromIntegral colPos)
+    return $ mkSizedOrError sBS
+
+computePartialSyndrome ::
+    SizedByteString CookieSeedBytes ->
+    SizedByteString McTinyBlockBytes ->
+    Int -> -- colPos
+    IO (SizedByteString McTinySyndromeBytes)
+computePartialSyndrome seedBS blockBS colPos = do
+    eBS <- seedToE seedBS
+    eBlockToSyndrome eBS blockBS colPos
