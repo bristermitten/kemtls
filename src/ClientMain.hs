@@ -87,9 +87,6 @@ runPhase1 = do
                     SizedBS.take @22 nonce
                         `SizedBS.appendSized` Nonce.phase1C2SNonce rowPos colPos
 
-            let suffix = BS.drop 22 (fromSized packetNonce)
-            liftIO $ putStrLn $ "Client sending nonce: " ++ show (BS.unpack (fromSized packetNonce))
-            liftIO $ putStrLn $ "Client sending nonce Suffix: " ++ show suffix
             let queryPacket =
                     Query1
                         block
@@ -97,6 +94,8 @@ runPhase1 = do
                         cookie
 
             sendPacket queryPacket
+            putStrLn $ "Sent Query1 packet for block (" ++ show rowPos ++ ", " ++ show colPos ++ ")"
+
             receivedPacket <- readPacket @Reply1
             let reply1Nonce = r1Nonce receivedPacket
             let rRowByte = SizedBS.index @22 reply1Nonce
@@ -112,4 +111,4 @@ runPhase1 = do
                         <> " but got "
                         <> show [rRowByte, rColByte]
 
-            liftIO $ putStrLn $ "Received Reply1 packet: " ++ show receivedPacket
+            putStrLn $ "Received Reply1 packet: " ++ show receivedPacket
