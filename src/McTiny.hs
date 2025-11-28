@@ -11,7 +11,7 @@ import Data.ByteString.Internal
 import Data.ByteString.Internal qualified as BS (create)
 import Foreign
 import Foreign.C.Types
-import GHC.TypeLits (type (+), type (-))
+import GHC.TypeLits (type (+), type (-), type (<=))
 import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, randomSized, sizedLength)
 import SizedByteString qualified as SizedBS
 
@@ -202,7 +202,13 @@ int packet_decrypt(const unsigned char *n,const unsigned char *k)
 }
 -}
 decryptPacketData ::
-    (HasCallStack, KnownNat payloadLen) =>
+    forall payloadLen.
+    ( HasCallStack
+    , KnownNat payloadLen
+    , KnownNat (16 + payloadLen)
+    , 16 <= 16 + payloadLen
+    , (16 + payloadLen) - 16 ~ payloadLen
+    ) =>
     SizedByteString (16 + payloadLen) ->
     SizedByteString PacketNonceBytes ->
     SizedByteString HashBytes ->
@@ -210,15 +216,15 @@ decryptPacketData ::
 decryptPacketData encryptedBS nonceBS keyBS = do
     -- Sanity Checks
 
-    let (cipherTag, ciphertext) = BS.splitAt 16 (fromSized encryptedBS)
-        ctLen = BS.length ciphertext
-        totalLen = 32 + ctLen -- 32 bytes headroom + Ciphertext length
+    let (cipherTag :: SizedByteString 16, ciphertext :: SizedByteString payloadLen) = SizedBS.splitAt @16 encryptedBS
+        ctLen = SizedBS.sizedLength ciphertext
+        totalLen = 32 + ctLen -- 32 bytes header + Ciphertext length
     fullBuffer <- BS.create totalLen $ \bufPtr -> do
         -- zero the header
         fillBytes bufPtr 32 0
 
         -- copy ciphertext to offset 32
-        BS.useAsCStringLen ciphertext $ \(ctPtr, len) ->
+        BS.useAsCStringLen (fromSized ciphertext) $ \(ctPtr, len) ->
             copyBytes (bufPtr `plusPtr` 32) (castPtr ctPtr) len
 
         -- call xsalsa20_xor to generate the subkey and decrypt
@@ -240,20 +246,22 @@ decryptPacketData encryptedBS nonceBS keyBS = do
                             (bufPtr `plusPtr` 32) -- input
                             (fromIntegral ctLen) -- input length
                             bufPtr -- key ptr
-                    when (polyRes /= 0) $ error "Poly1305 Failed"
-
-                    -- compare computed tag with provided tag
-                    BS.useAsCStringLen cipherTag \(tagPtr, tagLen) -> do
-                        tagMatch <- memcmp computedTagPtr (castPtr tagPtr) (fromIntegral tagLen)
-                        when (tagMatch /= 0) $ do
-                            expected <- BS.packCStringLen (tagPtr, tagLen)
-                            actual <- BS.packCStringLen (castPtr computedTagPtr, tagLen)
-                            error $
-                                "Authentication failed: tags do not match."
-                                    <> " Computed tag: "
-                                    <> show expected
-                                    <> " Provided tag: "
-                                    <> show actual
+                    when (polyRes /= 0) $ error
+                        "Poly1305 Failed"
+                        -- compare computed tag with provided tag
+                        BS.useAsCStringLen
+                        (fromSized cipherTag)
+                        \(tagPtr, tagLen) -> do
+                            tagMatch <- memcmp computedTagPtr (castPtr tagPtr) (fromIntegral tagLen)
+                            when (tagMatch /= 0) $ do
+                                expected <- BS.packCStringLen (tagPtr, tagLen)
+                                actual <- BS.packCStringLen (castPtr computedTagPtr, tagLen)
+                                error $
+                                    "Authentication failed: tags do not match."
+                                        <> " Computed tag: "
+                                        <> show expected
+                                        <> " Provided tag: "
+                                        <> show actual
 
                 -- decrypt the ciphertext
                 decryptRes <-
