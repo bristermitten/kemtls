@@ -1,5 +1,6 @@
 module InitialiseMain where
 
+import Constants
 import Data.ByteString qualified as BS
 import Foreign
 import McTiny
@@ -11,22 +12,25 @@ This emulates the functionality where the client knows the server's public key i
 -}
 main :: IO ()
 main = do
-  putStrLn "Initialising server keypair..."
-  createDirectoryIfMissing True pathToServerKeypair
+    putStrLn "Initialising server keypair..."
+    createDirectoryIfMissing True pathToServerKeypair
 
-  kp <- generateKeypair
-  saveKeypair kp
+    kp <- generateKeypair
+    saveKeypair kp
 
 saveKeypair :: (MonadIO m) => McElieceKeypair -> m ()
 saveKeypair kp = liftIO $ do
-  let pubPath = pathToServerPublicKey
-  let secPath = pathToServerSecretKey
-  withForeignPtr (publicKey kp) $ \pkPtr -> do
-    pkBS <- BS.packCStringLen (castPtr pkPtr, pkBytes)
-    writeFileBS pubPath pkBS
-    putStrLn $ "Saved public key to " <> pubPath
+    let pubPath = pathToServerPublicKey
+    let secPath = pathToServerSecretKey
 
-  withForeignPtr (secretKey kp) $ \skPtr -> do
-    skBS <- BS.packCStringLen (castPtr skPtr, skBytes)
-    writeFileBS secPath skBS
-    putStrLn $ "Saved secret key to " <> secPath
+    let (McEliecePublicKey pkFPtr) = publicKey kp
+    withForeignPtr pkFPtr $ \pkPtr -> do
+        pkBS <- BS.packCStringLen (castPtr pkPtr, pkBytes)
+        writeFileBS pubPath pkBS
+        putStrLn $ "Saved public key to " <> pubPath
+
+    let (McElieceSecretKey skFPtr) = secretKey kp
+    withForeignPtr skFPtr $ \skPtr -> do
+        skBS <- BS.packCStringLen (castPtr skPtr, skBytes)
+        writeFileBS secPath skBS
+        putStrLn $ "Saved secret key to " <> secPath
