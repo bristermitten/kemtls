@@ -2,6 +2,8 @@
 
 module Constants where
 
+import GHC.TypeLits (type (+))
+
 -- #crypto_kem_mceliece6960119_PUBLICKEYBYTES
 #define public_key_bytes 1047319
 pkBytes :: Int
@@ -38,6 +40,11 @@ type PacketNonceBytes = packet_NONCEBYTES
 
 -- #mctiny_BLOCKBYTES
 #define mctiny_BLOCKBYTES 1105
+mctinyBlockBytes :: (Num a) => a
+mctinyBlockBytes = mctiny_BLOCKBYTES
+
+type McTinyBlockBytes :: Nat
+type McTinyBlockBytes = mctiny_BLOCKBYTES
 
 #define crypto_hash_shake256_BYTES 32
 hashBytes :: (Num a) => a
@@ -85,17 +92,26 @@ type PacketExtensionsBytes = packet_ExtensionsBytes
 #define mcTiny_params_l 8
 -- mctiny_COLBLOCKS
 -- i.e. how many columns in the McTiny matrix
-mcTinyL :: (Num a) => a
-mcTinyL = mcTiny_params_l
+mcTinyColBlocks :: (Num a) => a
+mcTinyColBlocks = mcTiny_params_l
 
-type McTinyL :: Nat
-type McTinyL = mcTiny_params_l
+type McTinyColBlocks :: Nat
+type McTinyColBlocks = mcTiny_params_l
 
 #define mcTiny_params_r 119
 -- mctiny_ROWBLOCKS
 -- i.e. how many rows in the McTiny matrix
-mcTinyR :: (Num a) => a
-mcTinyR = mcTiny_params_r
+mcTinyRowBlocks :: (Num a) => a
+mcTinyRowBlocks = mcTiny_params_r
 
-type McTinyR :: Nat
-type McTinyR = mcTiny_params_r
+type McTinyRowBlocks :: Nat
+type McTinyRowBlocks = mcTiny_params_r
+
+#define mcTiny_encryption_headerBytes 16
+mcTinyEncryptionHeaderBytes :: (Num a) => a
+mcTinyEncryptionHeaderBytes = mcTiny_encryption_headerBytes
+
+type McTinyEncryptionHeaderBytes :: Nat
+type McTinyEncryptionHeaderBytes = mcTiny_encryption_headerBytes
+
+type EncryptedSize n = n + McTinyEncryptionHeaderBytes

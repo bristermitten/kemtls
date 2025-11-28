@@ -1,3 +1,5 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 module Client where
 
 import Client.State
@@ -5,7 +7,8 @@ import Control.Exception qualified as E
 import McTiny
 import Network.Socket
 import Network.Socket.ByteString.Lazy (recv, sendAll)
-import Packet (McTinyC2SPacket, McTinyPacket (..))
+import Packet
+import Protocol
 
 -- | Read-only environment for the KEMTLS client
 data ClientEnv = ClientEnv
@@ -31,24 +34,28 @@ runClient mhost port ss serverPK initialState action = do
             connect sock $ addrAddress addr
             return sock
 
-sendPacket :: (McTinyPacket a, MonadIO m) => a -> ReaderT ClientEnv m ()
+readPacket ::
+    forall a.
+    ( McTinyPacket a
+    , KnownNat (PacketSize a)
+    , PacketGetContext a ~ SharedSecret
+    ) =>
+    ClientM (PacketGetResult a)
+readPacket = do
+    sock <- asks envSocket
+    secret <- asks envSharedSecret
+
+    Protocol.recvPacket @a sock secret
+
+sendPacket ::
+    ( McTinyPacket a
+    , MonadIO m
+    , KnownNat (PacketSize a)
+    , PacketPutContext a ~ SharedSecret
+    ) =>
+    a -> ReaderT ClientEnv m ()
 sendPacket packet = do
     sock <- asks envSocket
     secret <- asks envSharedSecret
 
-    packetData <- liftIO $ putPacket secret packet
-    liftIO $ sendAll sock packetData
-
-recvPacket ::
-    forall a m.
-    (McTinyPacket a, KnownNat (PacketSize a), MonadIO m) =>
-    ReaderT ClientEnv m a
-recvPacket = do
-    sock <- asks envSocket
-    secret <- asks envSharedSecret
-
-    let size = fromIntegral $ natVal (Proxy @(PacketSize a))
-
-    -- Read exact bytes
-    packetData <- liftIO $ recv sock size
-    liftIO $ getPacket secret packetData
+    liftIO $ Protocol.sendPacket sock secret packet

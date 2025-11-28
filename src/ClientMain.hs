@@ -2,12 +2,11 @@ module ClientMain where
 
 import Client
 import Client.State
-import Constants (mcTinyL, mcTinyR)
-import Control.Exception qualified as E
-import Foreign (ForeignPtr)
+import Constants (mcTinyColBlocks, mcTinyRowBlocks)
 import McTiny
 import Packet
 import Paths
+import Protocol qualified
 import SizedByteString
 import SizedByteString qualified as SizedBS
 
@@ -51,7 +50,7 @@ runPhase0 = do
 
     putStrLn "Client initialized."
 
-    packet <- recvPacket @Reply0
+    packet <- readPacket @Reply0
 
     putStrLn $ "Received Reply0 packet: " ++ show packet
 
@@ -73,7 +72,26 @@ runPhase1 :: ClientM ()
 runPhase1 = do
     -- Placeholder for Phase 1 implementation
     liftIO $ putStrLn "Running Phase 1..."
+    pk <- asks envServerPublicKey
 
-    for_ [1 .. mcTinyR] $ \i -> do
-        for_ [1 .. mcTinyL] $ \j -> do
-            liftIO $ putStrLn $ "Processing block (" ++ show i ++ ", " ++ show j ++ ")"
+    cookie <- gets cookie
+    nonce <- gets longTermNonce
+
+    for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
+        for_ [1 .. mcTinyColBlocks] $ \colPos -> do
+            liftIO $ putStrLn $ "Processing block (" ++ show rowPos ++ ", " ++ show colPos ++ ")"
+            block <- liftIO $ pk2Block pk rowPos colPos
+            liftIO $ putStrLn $ "Retrieved block: " ++ show block
+
+            let packetNonce =
+                    SizedBS.take @22 nonce
+                        `snocSized` fromIntegral (2 * (rowPos - 1))
+                        `snocSized` fromIntegral (64 + colPos - 1)
+
+            let packet =
+                    Query1
+                        block
+                        packetNonce
+                        cookie
+
+            sendPacket packet

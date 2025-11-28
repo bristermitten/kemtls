@@ -8,7 +8,7 @@ import Data.Binary.Get (getByteString)
 import Data.Binary.Put
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Data.Type.Ord (type (<))
+import Data.Type.Ord (type (<), type (<=))
 import GHC.TypeLits (type (+))
 
 newtype SizedByteString (n :: Nat) = SizedByteString {getSized :: BS.ByteString}
@@ -46,40 +46,42 @@ class ByteStringLike t where
     bsReplicate :: Int64 -> Word8 -> t
     bsAtIndex :: t -> Int -> Word8
 
+    bsTake :: Int -> t -> t
+
 instance ByteStringLike BS.ByteString where
     toByteString = id
     fromByteString = id
     bsLength = BS.length
     bsReplicate len = BS.replicate (fromIntegral len)
     bsAtIndex = BS.index
+    bsTake = BS.take
 instance ByteStringLike LBS.ByteString where
     toByteString = toStrict
     fromByteString = fromStrict
     bsLength = fromIntegral . LBS.length
     bsReplicate = LBS.replicate
     bsAtIndex lbs i = LBS.index lbs (fromIntegral i)
+    bsTake n = LBS.take (fromIntegral n)
 
-class (ByteStringLike (Impl t n)) => SizedString t (n :: Nat) where
-    type Impl t n
+class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
+    type Impl t
 
     sizedLength :: t n -> (KnownNat n) => Int
     sizedLength _ = natToNum @n
 
-    fromSized :: t n -> Impl t n
-    unsafeMkSized :: Impl t n -> t n
+    fromSized :: t n -> Impl t
+    unsafeMkSized :: Impl t -> t n
 
     snocSized :: t n -> Word8 -> t (n + 1)
     appendSized :: t n -> t m -> t (n + m)
 
-    atIndex :: (KnownNat i, KnownNat n, i < n) => t n -> Int
-
-    mkSized :: (KnownNat n) => Impl t n -> Maybe (t n)
+    mkSized :: (KnownNat n) => Impl t -> Maybe (t n)
     mkSized bs
         | bsLength bs == natToNum @n = Just (unsafeMkSized bs)
         | otherwise = Nothing
 
 instance SizedString SizedByteString n where
-    type Impl SizedByteString n = BS.ByteString
+    type Impl SizedByteString = BS.ByteString
 
     fromSized (SizedByteString bs) = bs
     snocSized (SizedByteString bs) b = SizedByteString (BS.snoc bs b)
@@ -88,7 +90,7 @@ instance SizedString SizedByteString n where
     unsafeMkSized = SizedByteString
 
 instance SizedString SizedLazyByteString n where
-    type Impl SizedLazyByteString n = LBS.ByteString
+    type Impl SizedLazyByteString = LBS.ByteString
     fromSized (SizedLazyByteString lbs) = lbs
     snocSized (SizedLazyByteString lbs) b = SizedLazyByteString (lbs `LBS.snoc` b)
     appendSized (SizedLazyByteString lbs) (SizedLazyByteString lbs') = SizedLazyByteString (lbs `LBS.append` lbs')
@@ -97,13 +99,19 @@ instance SizedString SizedLazyByteString n where
 index :: forall i n t. (KnownNat i, KnownNat n, i < n, SizedString t n) => t n -> Word8
 index sized = bsAtIndex (fromSized sized) (natToNum @i)
 
+take :: forall m n t. (KnownNat m, m <= n, SizedString t n, SizedString t m) => t n -> t m
+take sized =
+    let bs = fromSized sized
+        len = natToNum @m @Int
+     in unsafeMkSized (bsTake len bs)
+
 natToNum :: forall n num. (KnownNat n, Num num) => num
 natToNum = fromIntegral (natVal (Proxy @n))
 
 replicate :: forall n t. (KnownNat n, SizedString t n) => Word8 -> t n
 replicate b = unsafeMkSized (bsReplicate (natToNum @n @Int64) b)
 
-mkSizedOrError :: forall n t. (KnownNat n, SizedString t n) => Impl t n -> t n
+mkSizedOrError :: forall n t. (KnownNat n, SizedString t n) => Impl t -> t n
 mkSizedOrError bs =
     case mkSized bs of
         Just sized -> sized

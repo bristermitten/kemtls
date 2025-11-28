@@ -42,6 +42,10 @@ foreign import ccall safe "bridge_crypto_onetimeauth_poly1305"
 foreign import ccall safe "crypto_hash_shake256"
     cs_shake256 :: Ptr Word8 -> Ptr Word8 -> CULLong -> IO CInt
 
+-- void mctiny_pk2block(unsigned char *out,const unsigned char *pk,int rowpos,int colpos)
+foreign import ccall safe "mctiny_pk2block"
+    c_mctiny_pk2block :: Ptr Word8 -> Ptr Word8 -> CInt -> CInt -> IO ()
+
 -- | Generate a McEliece keypair
 generateKeypair :: IO McElieceKeypair
 generateKeypair = do
@@ -315,3 +319,14 @@ createCookie0 kCookie kMaster seed keyId = do
         ( encrypted `snocSized` keyId -- b
         , nonce
         )
+
+pk2Block ::
+    McEliecePublicKey ->
+    Int -> -- rowPos
+    Int -> -- colPos
+    IO (SizedByteString McTinyBlockBytes)
+pk2Block (McEliecePublicKey pkFPtr) rowPos colPos = do
+    blockBS <- BS.create mctinyBlockBytes $ \outPtr ->
+        withForeignPtr pkFPtr $ \pkPtr -> do
+            c_mctiny_pk2block outPtr pkPtr (fromIntegral rowPos) (fromIntegral colPos)
+    return $ mkSizedOrError blockBS

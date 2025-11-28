@@ -11,7 +11,8 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import GHC.TypeLits (type (+))
-import McTiny (SharedSecret, decryptPacketData, encryptPacketData)
+import McTiny (SharedSecret, decap, decryptPacketData, encryptPacketData)
+import Server.State (ServerState (..))
 import SizedByteString as SizedBS
 import Utils
 import Prelude hiding (ByteString, put)
@@ -97,34 +98,49 @@ instance Binary ClientHello where
 instance TLSRecord ClientHello where
     recordID = 0x1
 
-data Packet
+newtype Packet
     = Handshake Handshake
-    | McTiny McTinyC2SPacket
 
 newtype Handshake
     = HandshakeClientHello ClientHello
 
-data McTinyC2SPacket
+data Query0
     = Query0
-        { query0Nonce :: SizedByteString PacketNonceBytes -- last 2 bytes zeroed
-        , query0ServerPKHash :: SizedByteString HashBytes -- sha3 hash of server's static public key
-        , query0CipherText :: SizedByteString 226 -- encapsulation of server's static key
-        , query0Extensions :: [SizedByteString 0] -- currently unused, should be empty
-        }
-    | Query1
-        { q1RowPos :: Int
-        , q1ColPos :: Int
-        , q1Block :: ByteString -- 1kb chunk of the public key
-        , q1Nonce :: ByteString -- should be 24 bytes long with last 2 bytes encapsulating row and col
-        , q1Cookie0 :: ByteString -- should be 16 bytes long
-        }
+    { query0Nonce :: SizedByteString PacketNonceBytes -- last 2 bytes zeroed
+    , query0ServerPKHash :: SizedByteString HashBytes -- sha3 hash of server's static public key
+    , query0CipherText :: SizedByteString 226 -- encapsulation of server's static key
+    , query0Extensions :: [SizedByteString 0] -- currently unused, should be empty
+    }
+    deriving stock (Show)
+
+data Query1
+    = Query1
+    { q1Block :: SizedByteString McTinyBlockBytes -- 1kb chunk of the public key
+    , q1Nonce :: SizedByteString PacketNonceBytes -- should be 24 bytes long with last 2 bytes encapsulating row and col
+    , q1Cookie0 :: SizedByteString CookieC0Bytes
+    }
 
 class McTinyPacket a where
     type PacketSize a :: Nat
-    putPacket :: (MonadIO m, Alternative m) => SharedSecret -> a -> m LBS.ByteString
-    getPacket :: (MonadIO m, Alternative m) => SharedSecret -> LBS.ByteString -> m a
 
-instance McTinyPacket McTinyC2SPacket where
+    type PacketPutContext a
+    -- ^ Context needed to put the packet
+
+    type PacketGetContext a
+    -- ^ Context needed to get the packet
+
+    type PacketGetResult a
+    -- ^ Result type when getting the packet
+
+    putPacket :: (MonadIO m, Alternative m) => PacketPutContext a -> a -> m LBS.ByteString
+    getPacket :: (MonadIO m, Alternative m) => PacketGetContext a -> LBS.ByteString -> m (PacketGetResult a)
+
+instance McTinyPacket Query0 where
+    type PacketSize Query0 = EncryptedSize PacketNonceBytes + HashBytes + 226 + PacketExtensionsBytes
+
+    type PacketPutContext Query0 = SharedSecret
+    type PacketGetContext Query0 = ServerState
+    type PacketGetResult Query0 = (Query0, SharedSecret)
     putPacket ss (Query0 nonce pkHash ct exts) = do
         guard (null exts) -- no extensions supported
         -- 512 0 bytes for extensions gets sent encrypted
@@ -137,29 +153,61 @@ instance McTinyPacket McTinyC2SPacket where
             putSizedByteString ct
             putSizedByteString nonce
 
-    getPacket ss input = do
+    getPacket serverState input = do
         let (mac, encrypted, pkHash, ct, nonce) =
                 runGet
                     ( do
                         mac <- getSizedByteString @16
                         encrypted <- getSizedByteString @PacketExtensionsBytes
-                        pkHash <- getSizedByteString @32
-                        ct <- getSizedByteString @226
-                        nonce <- getSizedByteString @24
+                        pkHash <- getSizedByteString @HashBytes
+                        ct <- getSizedByteString @CiphertextBytes
+                        nonce <- getSizedByteString @PacketNonceBytes
                         pure (mac, encrypted, pkHash, ct, nonce)
                     )
                     input
         -- make sure last 2 bytes of nonce are zero
         guard (SizedBS.index @22 nonce == 0 && SizedBS.index @23 nonce == 0)
 
-        decrypted <- liftIO $ decryptPacketData encrypted nonce ss
+        ss <- liftIO $ decap (serverSecretKey serverState) ct
+        decryptedExtensions <- liftIO $ decryptPacketData (mac `SizedBS.appendSized` encrypted) nonce ss
+        -- assert that extensions are 512 zero bytes
+        guard (decryptedExtensions == SizedBS.replicate @PacketExtensionsBytes 0)
 
-        pure $
-            Query0
+        pure
+            ( Query0
                 { query0Nonce = nonce
                 , query0ServerPKHash = pkHash
                 , query0CipherText = ct
                 , query0Extensions = [] -- no extensions supported
+                }
+            , ss
+            )
+
+instance McTinyPacket Query1 where
+    type PacketSize Query1 = McTinyBlockBytes + 16 + CookieC0Bytes + PacketNonceBytes
+    type PacketPutContext Query1 = SharedSecret
+    type PacketGetContext Query1 = SharedSecret
+    type PacketGetResult Query1 = Query1
+    putPacket ss (Query1 block nonce cookie) = do
+        encrypted <- liftIO $ encryptPacketData block nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString cookie
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedBlock, cookie, nonce) =
+                flip runGet input $ do
+                    encryptedBlock <- getSizedByteString @(McTinyBlockBytes + 16)
+                    cookie <- getSizedByteString @CookieC0Bytes
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (encryptedBlock, cookie, nonce)
+        decryptedBlock <- liftIO $ decryptPacketData encryptedBlock nonce ss
+        pure $
+            Query1
+                { q1Block = decryptedBlock
+                , q1Nonce = nonce
+                , q1Cookie0 = cookie
                 }
 
 data Reply0 = Reply0
@@ -170,6 +218,9 @@ data Reply0 = Reply0
 
 instance McTinyPacket Reply0 where
     type PacketSize Reply0 = CookieC0Bytes + 16 + PacketNonceBytes
+    type PacketPutContext Reply0 = SharedSecret
+    type PacketGetContext Reply0 = SharedSecret
+    type PacketGetResult Reply0 = Reply0
     putPacket ss (Reply0 cookie nonce) = do
         encrypted <- liftIO $ encryptPacketData cookie nonce ss
         putStrLn "Reply0 packet encrypted"

@@ -18,6 +18,7 @@ import Network.Socket
 import Network.Socket.ByteString.Lazy
 import Network.Transport.Internal (decodeNum16)
 import Packet
+import Protocol qualified
 import Server.State
 import SizedByteString as SizedBS
 import Utils
@@ -60,23 +61,27 @@ kemtlsServer mhost port serverSecretKey = do
             E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
                 putStrLn $ "Connection from " ++ show peer
 
-                -- Generate a simplified ID (e.g., file descriptor or random)
-                let cid = 1 -- In real code, increment a counter in ServerState
+                serverState <- readMVar stateVar
+                let cid = length (connectedClients serverState) + 1
 
                 -- Create the initial Local State for this client
                 let clientLocalState = newClient cid conn
 
                 forkFinally
                     (runStateT (runReaderT handleConnection stateVar) clientLocalState)
-                    (\_ -> cleanupClient stateVar cid conn)
+                    ( \result -> do
+                        case result of
+                            Left ex -> putStrLn $ "Thread crashed: " ++ show ex
+                            Right _ -> putStrLn "Thread finished normally"
+                        cleanupClient stateVar cid conn
+                    )
 
 newClient :: Int -> Socket -> ClientInfo
 newClient cid sock =
     ClientInfo
         { clientId = cid
         , clientSocket = sock
-        , -- , clientSharedSecret = Nothing
-          clientState = Initialised
+        , clientState = Initialised
         , clientCookieMemory = emptyClientCookies
         }
 
@@ -114,11 +119,16 @@ handleConnection = do
 
 handshakeLoop :: ExceptT Text ConnectionM ()
 handshakeLoop = do
-    client <- lift (lift Prelude.get)
+    client <- lift Prelude.get
+    putStrLn $ "Client " ++ show (clientId client) ++ " in state: " ++ show (clientState client)
     case clientState client of
         Initialised -> do
             liftIO $ putStrLn "Waiting for Query0..."
             processQuery0
+            handshakeLoop
+        SentReply0 sharedSecret -> do
+            liftIO $ putStrLn "Waiting for Query1..."
+            processQuery1
 
 processQuery0 :: ExceptT Text ConnectionM ()
 processQuery0 = do
@@ -127,28 +137,9 @@ processQuery0 = do
 
     stateVar <- lift ask
     globalState <- liftIO $ readMVar stateVar
-    let serverSK = serverSecretKey globalState
 
-    encryptedExtensions <- recvExact @(PacketExtensionsBytes + 16) conn
-    putStrLn "Received valid MAC and extensions from client"
-    pkHash <- recvExact @HashBytes conn -- todo verify this matches server public key hash
-    ct <- recvExact @CiphertextBytes conn
-    nonce <- recvExact @PacketNonceBytes conn
-    expect (SizedBS.index @22 nonce == 0 && SizedBS.index @23 nonce == 0) "Invalid nonce received from client"
-
-    ss <- liftIO $ decap serverSK (SizedBS.lazyToStrict ct)
-    putStrLn $ "Decapsulated shared secret: " ++ show ss
-
-    extensions <- liftIO $ decryptPacketData (SizedBS.lazyToStrict encryptedExtensions) (SizedBS.lazyToStrict nonce) ss
-    putStrLn $ "Decrypted extensions: " ++ show extensions
-    -- assert that extensions are 512 zero bytes
-    expect (extensions == SizedBS.replicate @PacketExtensionsBytes 0) "Invalid extensions received from client"
-
-    drg <- liftIO getSystemDRG
-    -- generate 176 random binary bits || 0, 0 for ClientHello.random
-    let (randomBytes :: ByteString, drg') = withRandomBytes drg (176 `div` 8) $ \bs ->
-            bs <> BS.pack [0, 0] -- last 2 bytes zeroed
-    putStrLn $ "Generated Reply0.random: " ++ show randomBytes
+    (query0, ss) <- lift $ Protocol.recvPacket @Query0 conn globalState
+    print query0
 
     -- generate 32 byte seed
     seed <- liftIO $ randomSized @CookieSeedBytes
@@ -167,16 +158,30 @@ processQuery0 = do
     -- update client state
     updateClientState (const (SentReply0 ss))
 
-sendPacket :: (McTinyPacket a) => ClientInfo -> SharedSecret -> a -> IO ()
-sendPacket client secret packet = do
+processQuery1 :: ExceptT Text ConnectionM ()
+processQuery1 = do
+    client <- lift (lift Prelude.get)
+    let conn = clientSocket client
+    pass
+
+sendPacket :: (McTinyPacket a, KnownNat (PacketSize a)) => ClientInfo -> PacketPutContext a -> a -> IO ()
+sendPacket client context packet = do
     let sock = clientSocket client
 
-    packetData <- putPacket secret packet
-    sendAll sock packetData
+    Protocol.sendPacket sock context packet
 
 expect :: (MonadError e f) => Bool -> e -> f ()
 expect True _ = pass
 expect False errMsg = throwError errMsg
+
+-- readPacket :: forall a. (McTinyPacket a, KnownNat (PacketSize a)) => ConnectionM a
+-- readPacket = do
+--     client <- Prelude.get
+--     let sock = clientSocket client
+--     let sharedSecret = case clientState client of
+--             SentReply0 ss -> ss
+--             _ -> undefined -- the packet sometimes doesnt need a shared secret
+--     Protocol.recvPacket @a sock sharedSecret
 
 recvExact :: forall i m. (MonadIO m, KnownNat i) => Socket -> m (SizedLazyByteString i)
 recvExact sock = do

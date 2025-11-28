@@ -14,8 +14,7 @@ data ServerState = ServerState
 data ClientInfo = ClientInfo
     { clientId :: Int
     , clientSocket :: Socket
-    , -- , clientSharedSecret :: SharedSecret
-      clientState :: ClientState
+    , clientState :: ClientState
     , clientCookieMemory :: ClientCookies
     -- ^ Stores client cookies. Max size of 8 entries.
     }
@@ -37,3 +36,4 @@ data ClientCookie = ClientCookie
 data ClientState
     = Initialised
     | SentReply0 SharedSecret
+    deriving stock (Show)
