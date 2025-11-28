@@ -6,7 +6,6 @@ import Client.State
 import Control.Exception qualified as E
 import McTiny
 import Network.Socket
-import Network.Socket.ByteString.Lazy (recv, sendAll)
 import Packet
 import Protocol
 

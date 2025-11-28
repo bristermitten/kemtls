@@ -7,11 +7,9 @@ import Constants
 import Control.Monad.Except (MonadError, throwError)
 import Cookie
 import Crypto.Random
-import Data.ByteString qualified as BS
-import Data.ByteString.Lazy qualified as LBS
-import McTiny (McElieceSecretKey, computePartialSyndrome, seedToE)
+import McTiny (McElieceSecretKey, computePartialSyndrome)
 import Network.Socket
-import Network.Socket.ByteString.Lazy
+import Nonce qualified
 import Packet
 import Protocol qualified
 import Server.State
@@ -167,6 +165,11 @@ processQuery1 = do
             let cookie = q1Cookie0 _packet
 
             globalState <- lift getGlobalState
+
+            -- verify last 2 bytes of nonce are what we'd expect
+            expect
+                (SizedBS.drop @22 (q1Nonce _packet) == Nonce.phase1C2SNonce rowPos colPos)
+                ("Invalid nonce in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
 
             (s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) cookie (q1Nonce _packet)
             -- we now have the shared secret s and _seed_ E

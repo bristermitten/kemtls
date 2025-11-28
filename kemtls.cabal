@@ -73,6 +73,7 @@ library
   import:          shared
   exposed-modules:
     McTiny
+    Nonce
     Packet
     Paths
     SizedByteString

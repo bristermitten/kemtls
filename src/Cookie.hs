@@ -3,6 +3,7 @@ module Cookie where
 import Constants
 import GHC.TypeLits
 import McTiny
+import Nonce qualified
 import SizedByteString as SizedBS
 
 {- | create the first cookie packet field
@@ -21,7 +22,9 @@ createCookie0 ::
     IO (SizedByteString CookieC0Bytes, SizedByteString PacketNonceBytes)
 createCookie0 kCookie kMaster seed keyId = do
     encKey <- mctinyHash (fromSized kCookie) -- hash(s_m)
-    nonce <- randomSized @NonceRandomPartBytes >>= \r -> pure (r `snocSized` 1 `snocSized` 0) -- N,1,0
+    nonce <-
+        randomSized @NonceRandomPartBytes
+            <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
     let payload = kMaster `appendSized` seed -- S, E
     encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
     return
@@ -43,7 +46,7 @@ decodeCookie0 kCookie cookieC0 packetNonce = do
     -- we have C0 ← (AE(S,E : N,1,0 : hash(sm)),m mod 8)
     let (encData, _keyIdBS) = SizedBS.splitAt @(CookieC0Bytes - 1) cookieC0
     let baseNonce = SizedBS.take @22 packetNonce
-        cookieNonce = baseNonce `snocSized` 1 `snocSized` 0
+        cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase0S2CNonce
 
     encKey <- mctinyHash (fromSized kCookie) -- hash(s_m)
     decrypted <- decryptPacketData encData cookieNonce encKey -- DAE(...)
@@ -67,8 +70,7 @@ createCookie1 kCookie syndrome packetNonce row col keyId = do
     let baseNonce = SizedBS.take @22 packetNonce
         cookieNonce =
             baseNonce
-                `snocSized` fromIntegral (2 * (row - 1))
-                `snocSized` fromIntegral (64 + col - 1)
+                `SizedBS.appendSized` Nonce.phase1S2CNonce row col
 
     encrypted <- encryptPacketData syndrome cookieNonce encKey
 

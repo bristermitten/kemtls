@@ -2,12 +2,12 @@ module ClientMain where
 
 import Client
 import Client.State
-import Constants (mcTinyColBlocks, mcTinyRowBlocks)
+import Constants (NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks)
 import Data.ByteString qualified as BS
 import McTiny
+import Nonce qualified
 import Packet
 import Paths
-import Protocol qualified
 import SizedByteString
 import SizedByteString qualified as SizedBS
 
@@ -31,11 +31,11 @@ main = do
 runPhase0 :: ClientM ()
 runPhase0 = do
     -- generate 176 random binary bits || 0, 0 for Query0.random
-    randomBytes :: SizedByteString 24 <-
+    nonce <-
         liftIO $
-            randomSized @22 -- 22 = 176 / 8
-                >>= \s -> pure (s `snocSized` 0 `snocSized` 0)
-    putStrLn $ "Generated Query0.random: " ++ show randomBytes
+            randomSized @NonceRandomPartBytes
+                <&> \r -> r `SizedBS.appendSized` Nonce.phase0C2SNonce
+    putStrLn $ "Generated Query0.random: " ++ show nonce
 
     serverPK <- asks envServerPublicKey
     ct <- gets ct
@@ -43,7 +43,7 @@ runPhase0 = do
     putStrLn $ "Computed server public key hash: " ++ show hash
     sendPacket $
         Query0
-            { query0Nonce = randomBytes
+            { query0Nonce = nonce
             , query0ServerPKHash = hash
             , query0CipherText = ct
             , query0Extensions = []
@@ -85,10 +85,10 @@ runPhase1 = do
 
             let packetNonce =
                     SizedBS.take @22 nonce
-                        `snocSized` fromIntegral (2 * (rowPos - 1))
-                        `snocSized` fromIntegral (64 + colPos - 1)
+                        `SizedBS.appendSized` Nonce.phase1C2SNonce rowPos colPos
 
             let suffix = BS.drop 22 (fromSized packetNonce)
+            liftIO $ putStrLn $ "Client sending nonce: " ++ show (BS.unpack (fromSized packetNonce))
             liftIO $ putStrLn $ "Client sending nonce Suffix: " ++ show suffix
             let queryPacket =
                     Query1
@@ -98,5 +98,18 @@ runPhase1 = do
 
             sendPacket queryPacket
             receivedPacket <- readPacket @Reply1
+            let reply1Nonce = r1Nonce receivedPacket
+            let rRowByte = SizedBS.index @22 reply1Nonce
+            let rColByte = SizedBS.index @23 reply1Nonce
+            let expectedRowByte = fromIntegral (2 * rowPos - 1) :: Word8
+            let expectedColByte = fromIntegral (64 + colPos - 1) :: Word8
+            unless (rRowByte == expectedRowByte && rColByte == expectedColByte) $
+                error $
+                    "Client Error: Invalid Reply Nonce for Block "
+                        <> show (rowPos, colPos)
+                        <> ". Expected "
+                        <> show [expectedRowByte, expectedColByte]
+                        <> " but got "
+                        <> show [rRowByte, rColByte]
 
             liftIO $ putStrLn $ "Received Reply1 packet: " ++ show receivedPacket

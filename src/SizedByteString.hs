@@ -32,12 +32,6 @@ randomSized = do
     bs <- getRandomBytes len
     return $ SizedByteString bs
 
--- randomSizedLazy :: forall n m. (KnownNat n, MonadRandom m) => m (SizedLazyByteString n)
--- randomSizedLazy = do
---     let len = fromIntegral (natVal (Proxy @n))
---     bs <- getRandomBytes len
---     return $ SizedLazyByteString bs
-
 class ByteStringLike t where
     toByteString :: t -> BS.ByteString
     fromByteString :: BS.ByteString -> t
@@ -107,6 +101,12 @@ take sized =
     let bs = fromSized sized
         len = natToNum @m @Int
      in unsafeMkSized (bsTake len bs)
+
+drop :: forall m n t. (KnownNat m, m <= n, SizedString t n, SizedString t (n - m)) => t n -> t (n - m)
+drop sized =
+    let bs = fromSized sized
+        len = natToNum @m @Int
+     in unsafeMkSized (snd (bsSplitAt len bs))
 
 splitAt :: forall m n t. (KnownNat m, KnownNat n, m <= n, SizedString t n, SizedString t m, SizedString t (n - m)) => t n -> (t m, t (n - m))
 splitAt sized =
