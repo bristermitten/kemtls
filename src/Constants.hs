@@ -166,3 +166,44 @@ sessionKeyBytes = mctiny_SESSIONKEYBYTES
 
 type SessionKeyBytes :: Nat
 type SessionKeyBytes = mctiny_SESSIONKEYBYTES
+
+#define mctiny_QUERY0BYTES 810
+#define mctiny_REPLY0BYTES 121
+#define mctiny_QUERY1BYTES 1226
+#define mctiny_REPLY1BYTES 140
+#define mctiny_QUERY2BYTES 1185
+#define mctiny_REPLY2BYTES 133
+#define mctiny_QUERY3BYTES 315
+#define mctiny_REPLY3BYTES 315
+
+type Query0Bytes :: Nat
+type Query0Bytes = mctiny_QUERY0BYTES
+
+type Reply0Bytes :: Nat
+type Reply0Bytes = mctiny_REPLY0BYTES
+
+type Query1Bytes :: Nat
+type Query1Bytes = mctiny_QUERY1BYTES
+
+type Reply1Bytes :: Nat
+type Reply1Bytes = mctiny_REPLY1BYTES
+
+type Query2Bytes :: Nat
+type Query2Bytes = mctiny_QUERY2BYTES
+
+type Reply2Bytes :: Nat
+type Reply2Bytes = mctiny_REPLY2BYTES
+
+type Query3Bytes :: Nat
+type Query3Bytes = mctiny_QUERY3BYTES
+
+type Reply3Bytes :: Nat
+type Reply3Bytes = mctiny_REPLY3BYTES
+
+#define mctiny_PIECEBYTES 12
+
+mctinyPieceBytes :: (Num a) => a
+mctinyPieceBytes = mctiny_PIECEBYTES
+
+type McTinyPieceBytes :: Nat
+type McTinyPieceBytes = mctiny_PIECEBYTES

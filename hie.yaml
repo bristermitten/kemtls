@@ -20,3 +20,6 @@ cradle:
 
     - path: "./InitialiseMain.hs"
       component: "kemtls:exe:initialise"
+
+    - path: "test"
+      component: "kemtls:test:test"

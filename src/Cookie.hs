@@ -5,6 +5,7 @@ import GHC.TypeLits
 import McTiny
 import Nonce qualified
 import SizedByteString as SizedBS
+import Prelude hiding ((||))
 
 {- | create the first cookie packet field
 corresponds to 'C0 <- (AE(S,E :N,1,0 : hash(s_m)),b)'  in the paper
@@ -21,11 +22,12 @@ createCookie0 ::
     -- | encoded cookie data
     IO (SizedByteString CookieC0Bytes, SizedByteString PacketNonceBytes)
 createCookie0 kCookie kMaster seed keyId = do
-    encKey <- mctinyHash (fromSized kCookie) -- hash(s_m)
+    encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
     nonce <-
         randomSized @NonceRandomPartBytes
             <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
     let payload = kMaster `appendSized` seed -- S, E
+    putStrLn $ "DEBUG: createCookie0 payload = " <> show payload
     encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
     return
         ( encrypted `snocSized` keyId -- b
@@ -34,6 +36,7 @@ createCookie0 kCookie kMaster seed keyId = do
 
 -- | decode the first cookie packet field
 decodeCookie0 ::
+    (HasCallStack) =>
     -- | server cookie key (s_m)
     SizedByteString CookieSecretKeyBytes ->
     -- | encoded cookie data
@@ -48,24 +51,28 @@ decodeCookie0 kCookie cookieC0 packetNonce = do
     let baseNonce = SizedBS.take @22 packetNonce
         cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase0S2CNonce
 
-    encKey <- mctinyHash (fromSized kCookie) -- hash(s_m)
+    encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
     decrypted <- decryptPacketData encData cookieNonce encKey -- DAE(...)
+    putStrLn $ "DEBUG: decodeCookie0 decrypted = " <> show decrypted
     let (sharedSecretBS, seedBS) = SizedBS.splitAt @SharedSecretBytes decrypted
+    when (seedBS /= SizedBS.replicate @CookieSeedBytes 0xAA) $
+        error "Cookie decode error: invalid seed"
     return (sharedSecretBS, seedBS)
 
 {- | Create a phase 1 cookie
 Ci,j ← (AE(ci,j : N,2i−1,64+j−1 : s), m mod 8)
 -}
 createCookie1 ::
-    SizedByteString CookieSecretKeyBytes ->
+    SizedByteString CookieSecretKeyBytes -> -- server cookie key (s_m)
+    SharedSecret -> -- s
     SizedByteString McTinySyndromeBytes -> -- syndrome ci,j
     SizedByteString PacketNonceBytes -> -- N
     Int -> -- i (row)
     Int -> -- j (column)
     Word8 -> -- key id (m)
     IO (SizedByteString Cookie1BlockBytes, SizedByteString PacketNonceBytes)
-createCookie1 kCookie syndrome packetNonce row col keyId = do
-    encKey <- mctinyHash (fromSized kCookie)
+createCookie1 kCookie kMaster syndrome packetNonce row col keyId = do
+    encKey <- mctinyHash $ toStrictBS (kCookie || kMaster)
 
     let baseNonce = SizedBS.take @22 packetNonce
         cookieNonce =
@@ -79,6 +86,8 @@ createCookie1 kCookie syndrome packetNonce row col keyId = do
 decodeCookie1 ::
     -- | server cookie key (s_m)
     SizedByteString CookieSecretKeyBytes ->
+    -- | shared secret (S) -
+    SharedSecret ->
     -- | encoded cookie data
     SizedByteString Cookie1BlockBytes ->
     -- | packet nonce
@@ -88,10 +97,12 @@ decodeCookie1 ::
 
     -- | decoded syndrome ci,j and nonce M
     IO (SizedByteString McTinySyndromeBytes, SizedByteString PacketNonceBytes)
-decodeCookie1 kCookie cookie1 packetNonce i j = do
+decodeCookie1 kCookie kMaster cookie1 packetNonce i j = do
     let (encData, _keyIdBS) = SizedBS.splitAt @(Cookie1BlockBytes - 1) cookie1
     let baseNonce = SizedBS.take @22 packetNonce
-        cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase1S2CNonce i j
-    encKey <- mctinyHash (fromSized kCookie)
+    let cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase1S2CNonce i j
+
+    encKey <- mctinyHash $ toStrictBS (kCookie || kMaster)
+
     decrypted <- decryptPacketData encData cookieNonce encKey
     return (decrypted, cookieNonce)

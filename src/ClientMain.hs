@@ -2,7 +2,8 @@ module ClientMain where
 
 import Client
 import Client.State
-import Constants (NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks, mctinyV)
+import Constants (CookieSeedBytes, NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks, mctinyV)
+import Control.Monad (foldM)
 import Data.ByteString qualified as BS
 import Data.Vector.Fixed qualified as Fixed
 import McTiny
@@ -22,8 +23,8 @@ main = do
 
     -- encapsulate a shared secret
     (ct, ss) <- encapsulate serverPK
-    putStrLn $ "Ciphertext: " ++ show ct
-    putStrLn $ "Shared Secret: " ++ show ss
+    putStrLn $ "Ciphertext: " <> show ct
+    putStrLn $ "Shared Secret: " <> show ss
 
     let initialState = Initial {ct = ct}
 
@@ -38,12 +39,12 @@ runPhase0 = do
         liftIO $
             randomSized @NonceRandomPartBytes
                 <&> \r -> r `SizedBS.appendSized` Nonce.phase0C2SNonce
-    putStrLn $ "Generated Query0.random: " ++ show nonce
+    putStrLn $ "Generated Query0.random: " <> show nonce
 
     ct <- gets ct
     serverPK <- asks envServerPublicKey
     serverPKHash <- lift $ lift (publicKeyBytes serverPK >>= mctinyHash)
-    putStrLn $ "Computed server public key hash: " ++ show serverPKHash
+    putStrLn $ "Computed server public key hash: " <> show serverPKHash
     sendPacket $
         Query0
             { query0NonceR = nonce
@@ -56,15 +57,15 @@ runPhase0 = do
 
     packet <- readPacket @Reply0
 
-    putStrLn $ "Received Reply0 packet: " ++ show packet
+    putStrLn $ "Received Reply0 packet: " <> show packet
 
     -- decode cookie
     let cookie = r0Cookie0 packet
     let longTermNonce = r0Nonce packet
 
-    putStrLn $ "Stored Opaque Cookie (" ++ show (SizedBS.sizedLength cookie) ++ " bytes)"
+    putStrLn $ "Stored Opaque Cookie (" <> show (SizedBS.sizedLength cookie) <> " bytes)"
     putStrLn "Handshake Phase 0 Complete."
-    putStrLn $ "Long term nonce: " ++ show longTermNonce
+    putStrLn $ "Long term nonce: " <> show longTermNonce
 
     guard (SizedBS.index @22 longTermNonce == 1 && SizedBS.index @23 longTermNonce == 0)
 
@@ -84,11 +85,12 @@ runPhase1 = do
     pk <- (.publicKey) <$> asks localKeypair
 
     cookie <- gets cookie0
+    unless (cookie /= SizedBS.replicate 0xAA) $
+        error "Client Error: Invalid Cookie0 in Phase 1"
     nonce <- gets longTermNonce
 
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
-            liftIO $ putStrLn $ "Processing block (" ++ show rowPos ++ ", " ++ show colPos ++ ")"
             block <- liftIO $ pk2Block pk rowPos colPos
 
             let packetNonce =
@@ -102,9 +104,9 @@ runPhase1 = do
                         cookie
 
             sendPacket queryPacket
-            putStrLn $ "Sent Query1 packet for block (" ++ show rowPos ++ ", " ++ show colPos ++ ")"
 
             receivedPacket <- readPacket @Reply1
+
             let reply1Nonce = r1Nonce receivedPacket
 
             unless (SizedBS.drop @22 reply1Nonce == Nonce.phase1S2CNonce rowPos colPos) $
@@ -112,7 +114,6 @@ runPhase1 = do
                     "Client Error: Invalid Reply Nonce for Block "
                         <> show (rowPos, colPos)
 
-            putStrLn $ "Received Reply1 packet: " ++ show receivedPacket
             modify
                 ( \case
                     p1@Phase1 {} ->
@@ -122,15 +123,25 @@ runPhase1 = do
                             }
                     _ -> error "Invalid client state when storing Reply1 blocks."
                 )
-    putStrLn "Handshake Phase 1 Complete."
     blocks <- gets receivedBlocks
+    unless (cookie /= SizedBS.replicate 0xAA) $
+        error "Client Error: Invalid Cookie0 in Phase 1"
     put (Phase2 cookie nonce blocks [])
+    state <- get
+    print state.cookie0
+    putStrLn "Handshake Phase 1 Complete."
     runPhase2
 
 runPhase2 :: ClientM ()
 runPhase2 = do
+    state <- get
+    print state.cookie0
+    let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
     allCookies <- gets receivedBlocks
     cookie0 <- gets cookie0
+    unless (cookie0 == SizedBS.replicate 0xAA) $
+        error $
+            "Client Error: Invalid Cookie0 in Phase 2: " <> show cookie0
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         cookies <-
             forM [i * mctinyV - mctinyV + 1 .. i * mctinyV] $ \rowPos -> do
@@ -149,14 +160,49 @@ runPhase2 = do
                     , query2Nonce = nonce `SizedBS.appendSized` Nonce.phase2C2SNonce i
                     }
         sendPacket packet
-        putStrLn $ "Sent Query2 packet for cookie blocks " ++ show (i * mctinyV - mctinyV + 1) ++ " to " ++ show (i * mctinyV)
+        putStrLn $ "Sent Query2 packet for cookie blocks " <> show (i * mctinyV - mctinyV + 1) <> " to " <> show (i * mctinyV)
 
         reply <- readPacket @Reply2
-        putStrLn $ "Received Reply2 packet: " ++ show reply
+        let receivedSynd2 = r2Syndrome2 reply
+        when (i == 1) $ do
+            let startRow = 1
+            let endRow = 7 -- Piece 0 is rows 1..7
+
+            -- Calculate synd1s locally
+            synd1s <- forM [startRow .. endRow] $ \row ->
+                forM [1 .. 8] $ \col -> do
+                    pk <- publicKey <$> asks localKeypair
+                    blk <- liftIO $ pk2Block pk row col
+                    liftIO $ computePartialSyndrome debugSeed blk col
+
+            -- Aggregate locally
+            initial <- liftIO $ computePieceSyndrome debugSeed i
+
+            putStrLn "DEBUG: Calculating expected syndrome2 locally..."
+            putStrLn $ "DEBUG: debugSeed = " <> show debugSeed
+            putStrLn $ "DEBUG: initial = " <> show initial <> " for piece " <> show i
+
+            expectedSynd2 <-
+                liftIO $
+                    foldM
+                        ( \acc (idx, s1) -> do
+                            let rowInPiece = idx `div` 8
+                            absorbSyndromeIntoPiece acc s1 rowInPiece
+                        )
+                        initial
+                        (zip [0 ..] (concat synd1s))
+
+            liftIO $ putStrLn "DEBUG Check:"
+            liftIO $ putStrLn $ "  Server Sent: " ++ show receivedSynd2
+            liftIO $ putStrLn $ "  Client Calc: " ++ show expectedSynd2
+
+            if receivedSynd2 /= expectedSynd2
+                then error "MATH MISMATCH! Server calculated wrong syndrome."
+                else liftIO $ putStrLn "DEBUG: Math Match! Server is correct."
         modify
             ( \case
                 ph2@(Phase2 {}) ->
-                    ph2 {syndromes = syndromes ph2 ++ Fixed.toList (r2CJs reply)}
+                    ph2 {syndromes = syndromes ph2 <> [r2Syndrome2 reply]}
                 _ -> error "Invalid client state when storing Reply2 syndromes."
             )
 
@@ -182,9 +228,8 @@ runPhase3 = do
     putStrLn "Sent Query3 packet."
 
     reply <- readPacket @Reply3
-    putStrLn $ "Received Reply3 packet: " ++ show reply
 
     sk <- (.secretKey) <$> asks localKeypair
-    _Z <- liftIO $ decap sk (reply.reply3C || reply.reply3MergedPieces)
+    _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z

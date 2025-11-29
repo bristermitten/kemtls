@@ -1,5 +1,6 @@
 { lib, inputs, ... }: {
   perSystem = { config, pkgs, system, ... }: {
+    packages.mctiny = pkgs.mctiny;
     _module.args.pkgs = import inputs.nixpkgs {
       inherit system;
       overlays = [

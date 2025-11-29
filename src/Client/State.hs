@@ -22,8 +22,9 @@ data ClientState
         { cookie0 :: SizedByteString CookieC0Bytes
         , longTermNonce :: SizedByteString NonceRandomPartBytes -- N
         , receivedBlocks :: ReceivedBlocks
-        , syndromes :: [SizedByteString McTinySyndromeBytes]
+        , syndromes :: [SizedByteString McTinyPieceBytes]
         }
+    deriving stock (Show)
 
 newtype ReceivedBlocks = ReceivedBlocks
     {blocks :: Map (Int, Int) (SizedByteString Cookie1BlockBytes)}

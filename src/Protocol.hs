@@ -9,7 +9,7 @@ import Packet
 
 recvPacket ::
     forall a m.
-    (McTinyPacket a, KnownNat (PacketSize a), MonadIO m) =>
+    (McTinyPacket a, KnownNat (PacketSize a), MonadIO m, HasCallStack) =>
     Socket ->
     PacketGetContext a ->
     m (PacketGetResult a)
@@ -29,7 +29,7 @@ recvPacket sock secret = do
         else
             liftIO $ getPacket @a secret packetData
 
-sendPacket :: forall a. (McTinyPacket a, HasCallStack, KnownNat (PacketSize a)) => Socket -> PacketPutContext a -> a -> IO ()
+sendPacket :: forall a. (McTinyPacket a, HasCallStack, KnownNat (PacketSize a), HasCallStack) => Socket -> PacketPutContext a -> a -> IO ()
 sendPacket sock secret packet = do
     packetData <- putPacket secret packet
     when (LBS.length packetData /= fromIntegral (natVal (Proxy @(PacketSize a)))) $

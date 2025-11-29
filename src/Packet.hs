@@ -140,7 +140,7 @@ class McTinyPacket a where
     getPacket :: (MonadIO m, Alternative m) => PacketGetContext a -> LBS.ByteString -> m (PacketGetResult a)
 
 instance McTinyPacket Query0 where
-    type PacketSize Query0 = EncryptedSize PacketNonceBytes + HashBytes + 226 + PacketExtensionsBytes
+    type PacketSize Query0 = Query0Bytes
 
     type PacketPutContext Query0 = SharedSecret
     type PacketGetContext Query0 = ServerState
@@ -186,7 +186,7 @@ instance McTinyPacket Query0 where
             )
 
 instance McTinyPacket Query1 where
-    type PacketSize Query1 = McTinyBlockBytes + 16 + CookieC0Bytes + PacketNonceBytes
+    type PacketSize Query1 = Query1Bytes
     type PacketPutContext Query1 = SharedSecret
     type PacketGetContext Query1 = SharedSecret
     type PacketGetResult Query1 = Query1
@@ -219,7 +219,7 @@ data Reply0 = Reply0
     deriving stock (Show)
 
 instance McTinyPacket Reply0 where
-    type PacketSize Reply0 = CookieC0Bytes + 16 + PacketNonceBytes
+    type PacketSize Reply0 = Reply0Bytes
     type PacketPutContext Reply0 = SharedSecret
     type PacketGetContext Reply0 = SharedSecret
     type PacketGetResult Reply0 = Reply0
@@ -255,7 +255,7 @@ data Reply1 = Reply1
     deriving stock (Show)
 
 instance McTinyPacket Reply1 where
-    type PacketSize Reply1 = EncryptedSize (CookieC0Bytes + Cookie1BlockBytes) + PacketNonceBytes
+    type PacketSize Reply1 = Reply1Bytes
     type PacketPutContext Reply1 = SharedSecret
     type PacketGetContext Reply1 = SharedSecret
     type PacketGetResult Reply1 = Reply1
@@ -300,11 +300,7 @@ expectedQuery2CookieLength :: Int
 expectedQuery2CookieLength = mcTinyColBlocks * mctinyV
 
 instance McTinyPacket Query2 where
-    type
-        PacketSize Query2 =
-            EncryptedSize (ExpectedQuery2CookieLength * Cookie1BlockBytes)
-                + CookieC0Bytes
-                + PacketNonceBytes
+    type PacketSize Query2 = Query2Bytes
     type PacketPutContext Query2 = SharedSecret
     type PacketGetContext Query2 = SharedSecret
     type PacketGetResult Query2 = Query2
@@ -344,49 +340,41 @@ instance McTinyPacket Query2 where
 
 data Reply2 = Reply2
     { r2Cookie0 :: SizedByteString CookieC0Bytes
-    , r2CJs :: Vec ExpectedQuery2CookieLength (SizedByteString McTinySyndromeBytes)
+    , r2Syndrome2 :: SizedByteString McTinyPieceBytes
     , r2Nonce :: SizedByteString PacketNonceBytes
     }
     deriving stock (Show)
 
 instance McTinyPacket Reply2 where
-    type
-        PacketSize Reply2 =
-            EncryptedSize (ExpectedQuery2CookieLength * McTinySyndromeBytes)
-                + CookieC0Bytes
-                + PacketNonceBytes
+    type PacketSize Reply2 = Reply2Bytes
     type PacketPutContext Reply2 = SharedSecret
     type PacketGetContext Reply2 = SharedSecret
     type PacketGetResult Reply2 = Reply2
 
-    putPacket ss (Reply2 cookie0 cjs nonce) = do
-        let concatenatedCJs =
-                mkSizedOrError @(ExpectedQuery2CookieLength * McTinySyndromeBytes) $
-                    mconcat (fmap fromSized (toList cjs))
-        let payload = concatenatedCJs `appendSized` cookie0
+    putPacket ss (Reply2 cookie0 r2Syndrome2 nonce) = do
+        let payload = cookie0 || r2Syndrome2
         encrypted <- liftIO $ encryptPacketData payload nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
             putSizedByteString nonce
 
     getPacket ss input = do
-        let (encryptedPayload, cookie0, nonce) =
+        let (encryptedPayload, nonce) =
                 flip runGet input $ do
                     encryptedPayload <-
                         getSizedByteString
                             @( EncryptedSize
-                                (ExpectedQuery2CookieLength * McTinySyndromeBytes)
+                                (CookieC0Bytes + McTinyPieceBytes)
                              )
-                    cookie0 <- getSizedByteString @CookieC0Bytes
                     nonce <- getSizedByteString @PacketNonceBytes
-                    pure (encryptedPayload, cookie0, nonce)
+                    pure (encryptedPayload, nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
-        let cjs = SizedBS.splitInto @ExpectedQuery2CookieLength decryptedPayload
-        let cjsVec = fromList' cjs
+        let (cookie0, cjs) = SizedBS.splitAt @CookieC0Bytes decryptedPayload
+
         pure $
             Reply2
                 { r2Cookie0 = cookie0
-                , r2CJs = cjsVec
+                , r2Syndrome2 = cjs
                 , r2Nonce = nonce
                 }
 
@@ -398,7 +386,7 @@ data Query3 = Query3
     deriving stock (Show)
 
 instance McTinyPacket Query3 where
-    type PacketSize Query3 = EncryptedSize McTinyColBytes + CookieC0Bytes + PacketNonceBytes
+    type PacketSize Query3 = Query3Bytes
     type PacketPutContext Query3 = SharedSecret
     type PacketGetContext Query3 = SharedSecret
     type PacketGetResult Query3 = Query3
@@ -427,14 +415,18 @@ instance McTinyPacket Query3 where
 
 data Reply3 = Reply3
     { reply3C_z :: SizedByteString Cookie9Bytes
+    -- ^ cookie C_z
     , reply3MergedPieces :: SizedByteString McTinyColBytes
+    -- ^ merged pieces c_1, ..., c_r
     , reply3C :: SizedByteString HashBytes
+    -- ^ hash value C
     , reply3Nonce :: SizedByteString PacketNonceBytes
+    -- ^ packet nonce M, 255, 255
     }
     deriving stock (Show)
 
 instance McTinyPacket Reply3 where
-    type PacketSize Reply3 = EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes) + PacketNonceBytes
+    type PacketSize Reply3 = Reply3Bytes
     type PacketPutContext Reply3 = SharedSecret
     type PacketGetContext Reply3 = SharedSecret
     type PacketGetResult Reply3 = Reply3

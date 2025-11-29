@@ -16,7 +16,7 @@ import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrErr
 import SizedByteString qualified as SizedBS
 
 -- int crypto_kem_mceliece6960119_keypair(unsigned char *pk, unsigned char *sk);
-foreign import ccall safe "crypto_kem_mceliece6960119_keypair"
+foreign import ccall unsafe "crypto_kem_mceliece6960119_keypair"
     c_keypair :: Ptr Word8 -> Ptr Word8 -> IO CInt
 
 -- int crypto_kem_mceliece6960119_enc(unsigned char *ct, unsigned char *ss, const unsigned char *pk)
@@ -100,21 +100,19 @@ encapsulate (McEliecePublicKey pkFPtr) = do
                 return (ct, ss)
 
 -- | Decapsulate a shared secret using the given secret key and ciphertext
-decap :: McElieceSecretKey -> Ciphertext -> IO SharedSecret
+decap :: (HasCallStack) => McElieceSecretKey -> Ciphertext -> IO SharedSecret
 decap (McElieceSecretKey skFPtr) ct = do
     ssFPtr <- mallocForeignPtrBytes sharedSecretBytes
     withForeignPtr skFPtr $ \skPtr ->
-        BS.useAsCString (fromSized ct) $ \ctPtr ->
+        SizedBS.useAsCString ct $ \ctPtr ->
             withForeignPtr ssFPtr $ \ssPtr -> do
                 res <- c_dec ssPtr (castPtr ctPtr) skPtr
-                when (res /= 0) $ error "Decapsulation failed"
+                when (res /= 0) $ error ("Decapsulation failed: " <> show res)
 
-                mkSizedOrError
-                    <$> BS.create
-                        sharedSecretBytes
-                        ( \destPtr ->
-                            copyBytes destPtr ssPtr (fromIntegral sharedSecretBytes)
-                        )
+                SizedBS.create @SharedSecretBytes
+                    ( \destPtr ->
+                        copyBytes destPtr ssPtr (fromIntegral sharedSecretBytes)
+                    )
 
 data McElieceKeypair = McElieceKeypair
     { publicKey :: McEliecePublicKey
@@ -154,7 +152,13 @@ Produces a bytestring of length (16 + payload length)
 nicer version of the packet_encrypt function in packet.c
 -}
 encryptPacketData ::
-    (KnownNat payloadLen, KnownNat (payloadLen + 16)) =>
+    forall payloadLen.
+    ( KnownNat payloadLen
+    , KnownNat (payloadLen + 16)
+    , KnownNat (HashBytes + payloadLen)
+    , 16 <= HashBytes + payloadLen
+    , HashBytes + payloadLen - 16 ~ (payloadLen + 16)
+    ) =>
     SizedByteString payloadLen ->
     SizedByteString PacketNonceBytes ->
     SizedByteString HashBytes ->
@@ -164,16 +168,16 @@ encryptPacketData payloadBS nonceBS keyBS = do
         totalLen = hashBytes + payloadLen
 
     -- Allocate the full output buffer (Header + Payload)
-    fullBuffer <- BS.create totalLen $ \bufPtr -> do
+    fullBuffer <- SizedBS.create @(HashBytes + payloadLen) $ \bufPtr -> do
         -- zero the first 32 bytes
         fillBytes bufPtr hashBytes 0
 
         -- copy payload
-        BS.useAsCStringLen (fromSized payloadBS) $ \(payloadPtr, copyLen) ->
+        SizedBS.useAsCStringLen payloadBS $ \(payloadPtr, copyLen) ->
             copyBytes (bufPtr `plusPtr` hashBytes) (castPtr payloadPtr) copyLen
         -- call xsalsa20_xor
-        BS.useAsCString (fromSized nonceBS) $ \tempNoncePtr -> do
-            BS.useAsCString (fromSized keyBS) $ \tempKeyPtr -> do
+        SizedBS.useAsCString nonceBS $ \tempNoncePtr -> do
+            SizedBS.useAsCString keyBS $ \tempKeyPtr -> do
                 -- Call C function with the safe temp pointers
                 res <-
                     cs_xsalsa20_xor
@@ -194,7 +198,7 @@ encryptPacketData payloadBS nonceBS keyBS = do
         when (res /= 0) $ error "Poly1305 Failed"
 
     -- drop the first 16 bytes which should be useless
-    return $ mkSizedOrError (BS.drop 16 fullBuffer)
+    return (SizedBS.drop @16 fullBuffer)
 
 {-
 int packet_decrypt(const unsigned char *n,const unsigned char *k)
@@ -218,8 +222,11 @@ decryptPacketData ::
     ( HasCallStack
     , KnownNat payloadLen
     , KnownNat (16 + payloadLen)
+    , KnownNat (32 + payloadLen)
     , 16 <= 16 + payloadLen
     , (16 + payloadLen) - 16 ~ payloadLen
+    , (32 + payloadLen) - 32 ~ payloadLen
+    , 32 <= 32 + payloadLen
     ) =>
     SizedByteString (16 + payloadLen) ->
     SizedByteString PacketNonceBytes ->
@@ -231,17 +238,17 @@ decryptPacketData encryptedBS nonceBS keyBS = do
     let (cipherTag :: SizedByteString 16, ciphertext :: SizedByteString payloadLen) = SizedBS.splitAt @16 encryptedBS
         ctLen = SizedBS.sizedLength ciphertext
         totalLen = 32 + ctLen -- 32 bytes header + Ciphertext length
-    fullBuffer <- BS.create totalLen $ \bufPtr -> do
+    fullBuffer <- SizedBS.create @(32 + payloadLen) $ \bufPtr -> do
         -- zero the header
         fillBytes bufPtr 32 0
 
         -- copy ciphertext to offset 32
-        BS.useAsCStringLen (fromSized ciphertext) $ \(ctPtr, len) ->
+        SizedBS.useAsCStringLen ciphertext $ \(ctPtr, len) ->
             copyBytes (bufPtr `plusPtr` 32) (castPtr ctPtr) len
 
         -- call xsalsa20_xor to generate the subkey and decrypt
-        BS.useAsCString (fromSized nonceBS) \noncePtr -> do
-            BS.useAsCString (fromSized keyBS) \keyPtr -> do
+        SizedBS.useAsCString nonceBS \noncePtr -> do
+            SizedBS.useAsCString keyBS \keyPtr -> do
                 salsaRes <-
                     cs_xsalsa20_xor
                         bufPtr -- output
@@ -286,19 +293,15 @@ decryptPacketData encryptedBS nonceBS keyBS = do
                 when (decryptRes /= 0) $ error "XSalsa20 Decryption Failed"
 
     -- drop the first 32 bytes
-    return $ mkSizedOrError (BS.drop 32 fullBuffer)
+    return (SizedBS.drop @32 fullBuffer)
 
 mctinyHash :: BS.ByteString -> IO (SizedByteString HashBytes)
 mctinyHash inputBS = do
     let inputLen = fromIntegral (BS.length inputBS) :: CULLong
-    let outputLen = hashBytes :: CULLong
-    res <- BS.create (fromIntegral outputLen) \outputPtr ->
+    SizedBS.create \outputPtr ->
         BS.useAsCString inputBS \inputPtr -> do
             res <- cs_shake256 outputPtr (castPtr inputPtr) inputLen
             when (res /= 0) $ error "Hashing failed"
-    case mkSized res of
-        Just sizedRes -> return sizedRes
-        Nothing -> error "Hash output has incorrect length"
 
 -- | A pointer to a McEliece public key
 newtype McEliecePublicKey = McEliecePublicKey (ForeignPtr Word8) deriving stock (Eq, Show)
@@ -339,89 +342,93 @@ pk2Block ::
     Int -> -- colPos
     IO (SizedByteString McTinyBlockBytes)
 pk2Block (McEliecePublicKey pkFPtr) rowPos colPos = do
-    blockBS <- BS.create mctinyBlockBytes $ \outPtr ->
+    SizedBS.create $ \outPtr ->
         withForeignPtr pkFPtr $ \pkPtr -> do
             c_mctiny_pk2block outPtr pkPtr (fromIntegral rowPos) (fromIntegral colPos)
-    return $ mkSizedOrError blockBS
 
 seedToE ::
     SizedByteString CookieSeedBytes ->
     IO (SizedByteString McTinyErrorVectorBytes)
 seedToE seedBS = do
-    eBS <- BS.create mctinyErrorVectorBytes $ \ePtr ->
-        BS.useAsCString (fromSized seedBS) $ \seedPtr -> do
+    SizedBS.create $ \ePtr ->
+        SizedBS.useAsCString seedBS $ \seedPtr -> do
             c_mctiny_seed2e ePtr (castPtr seedPtr)
-    return $ mkSizedOrError eBS
 
 eBlockToSyndrome ::
-    SizedByteString McTinyErrorVectorBytes ->
-    SizedByteString McTinyBlockBytes ->
+    SizedByteString McTinyErrorVectorBytes -> -- e
+    SizedByteString McTinyBlockBytes -> -- block
     Int -> -- colPos
     IO (SizedByteString McTinySyndromeBytes)
 eBlockToSyndrome eBS blockBS colPos = do
-    sBS <- BS.create mctinySyndromeBytes $ \sPtr ->
-        BS.useAsCString (fromSized eBS) \ePtr ->
-            BS.useAsCString (fromSized blockBS) \blockPtr -> do
+    SizedBS.create $ \sPtr ->
+        -- create syndrome output
+        SizedBS.useAsCString eBS \ePtr ->
+            -- read e input
+            SizedBS.useAsCString blockBS \blockPtr -> do
+                -- read block input
                 c_mctiny_eblock2syndrome
                     sPtr
                     (castPtr ePtr)
                     (castPtr blockPtr)
                     (fromIntegral colPos)
-    return $ mkSizedOrError sBS
 
 -- | Computes c_i,j ← K_i,j * e_j
 computePartialSyndrome ::
+    (HasCallStack) =>
     SizedByteString CookieSeedBytes ->
     SizedByteString McTinyBlockBytes ->
     Int -> -- colPos
     IO (SizedByteString McTinySyndromeBytes)
 computePartialSyndrome seedBS blockBS colPos = do
+    unless (colPos > 0 && colPos <= mcTinyColBlocks) $
+        error $
+            "Invalid column position: " <> show colPos
     eBS <- seedToE seedBS
-    eBlockToSyndrome eBS blockBS colPos
+    eBlockToSyndrome eBS blockBS (colPos - 1)
 
 computePieceSyndrome ::
     SizedByteString CookieSeedBytes ->
     Int -> -- piece index p
-    IO (SizedByteString McTinySyndromeBytes)
+    IO (SizedByteString McTinyPieceBytes)
 computePieceSyndrome seedBS piecePos = do
     eBS <- seedToE seedBS
-    sBS <- BS.create mctinySyndromeBytes $ \sPtr ->
-        BS.useAsCString (fromSized eBS) \ePtr -> do
+    SizedBS.create $ \sPtr ->
+        SizedBS.useAsCString eBS \ePtr -> do
             c_mctiny_pieceinit
                 sPtr
                 (castPtr ePtr)
-                (fromIntegral piecePos)
-    return $ mkSizedOrError sBS
+                (fromIntegral (piecePos - 1))
 
 absorbSyndromeIntoPiece ::
-    SizedByteString McTinySyndromeBytes ->
+    SizedByteString McTinyPieceBytes ->
     SizedByteString McTinySyndromeBytes ->
     Int -> -- piece index i
-    IO (SizedByteString McTinySyndromeBytes) -- returns updated syndrome2
+    IO (SizedByteString McTinyPieceBytes) -- returns updated syndrome2
 absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
-    newSyndrome2 <- BS.create mctinySyndromeBytes $ \newSyndrome2Ptr ->
-        BS.useAsCString (fromSized synd2BS) \synd2Ptr -> do
-            copyBytes newSyndrome2Ptr (castPtr synd2Ptr) mctinySyndromeBytes
-            BS.useAsCString (fromSized synd1BS) \synd1Ptr -> do
+    SizedBS.create $ \newSyndrome2Ptr ->
+        -- create new syndrome2 result string
+        SizedBS.useAsCString synd2BS \synd2Ptr -> do
+            -- read synd2 input
+            copyBytes newSyndrome2Ptr (castPtr synd2Ptr) (SizedBS.sizedLength synd2BS) -- copy input to output
+            SizedBS.useAsCString synd1BS \synd1Ptr -> do
+                -- read synd1 input
                 c_mctiny_pieceabsorb
                     newSyndrome2Ptr
                     (castPtr synd1Ptr)
                     (fromIntegral pieceIndex)
 
-    return $ mkSizedOrError newSyndrome2
-
 mergePieceSyndromes ::
     (HasCallStack) =>
-    [SizedByteString McTinySyndromeBytes] -> -- list of synd2
+    [SizedByteString McTinyPieceBytes] -> -- list of synd2
     IO (SizedByteString McTinyColBytes) -- returns merged synd3
 mergePieceSyndromes synd2List = do
     let numPieces = length synd2List
     SizedBS.create @McTinyColBytes $ \synd3Ptr ->
-        allocaBytes (numPieces * mctinySyndromeBytes) $ \synd2ArrayPtr -> do
+        allocaBytes (numPieces * mctinyPieceBytes) $ \synd2ArrayPtr -> do
             -- copy each synd2 into the array
             forM_ (zip [0 ..] synd2List) $ \(i, synd2BS) -> do
-                BS.useAsCString (fromSized synd2BS) $ \synd2Ptr -> do
-                    let destPtr = synd2ArrayPtr `plusPtr` (i * mctinySyndromeBytes)
-                    copyBytes destPtr (castPtr synd2Ptr) mctinySyndromeBytes
+                SizedBS.useAsCString synd2BS $ \synd2Ptr -> do
+                    let destPtr = synd2ArrayPtr `plusPtr` (i * mctinyPieceBytes)
+                    copyBytes destPtr (castPtr synd2Ptr) mctinyPieceBytes
             -- call the C function
             c_mctiny_mergepieces synd3Ptr synd2ArrayPtr

@@ -1,47 +1,43 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module SizedByteString where
 
-import Crypto.Random
-import Data.Binary
-import Data.Binary.Get (getByteString)
-import Data.Binary.Put
+import Crypto.Random (MonadRandom, getRandomBytes)
+import Data.Binary (Binary)
+import Data.Binary.Get (Get, getByteString)
+import Data.Binary.Put (Put, putByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BS (create)
 import Data.ByteString.Lazy qualified as LBS
+import Data.ByteString.Short qualified as SBS
 import Data.Type.Ord (type (<), type (<=))
 import Foreign (Ptr)
+import Foreign.C (CString)
 import GHC.TypeLits (Div, Mod, type (+), type (-))
 
-newtype SizedByteString (n :: Nat) = UnsafeMkSizedByteString {getSized :: BS.ByteString}
-    deriving newtype (Eq, Show, Binary)
+newtype SizedByteString (n :: Nat) = SizedByteString {getSized :: SBS.ShortByteString}
+    deriving newtype (Eq, Show, Binary, Ord)
 
 newtype SizedLazyByteString (n :: Nat) = SizedLazyByteString {getSizedLazy :: LBS.ByteString}
     deriving newtype (Eq, Show, Binary)
-
-lazyToStrict :: SizedLazyByteString n -> SizedByteString n
-lazyToStrict (SizedLazyByteString lbs) = UnsafeMkSizedByteString (toStrict lbs)
-
-strictToLazy :: SizedByteString n -> SizedLazyByteString n
-strictToLazy (UnsafeMkSizedByteString bs) = SizedLazyByteString (fromStrict bs)
-
-unsafeSized :: BS.ByteString -> SizedByteString n
-unsafeSized = UnsafeMkSizedByteString
-
-randomSized :: forall n m. (KnownNat n, MonadRandom m) => m (SizedByteString n)
-randomSized = do
-    let len = fromIntegral (natVal (Proxy @n))
-    bs <- getRandomBytes len
-    return $ UnsafeMkSizedByteString bs
 
 class ByteStringLike t where
     toByteString :: t -> BS.ByteString
     fromByteString :: BS.ByteString -> t
     bsLength :: t -> Int
-
     bsReplicate :: Int64 -> Word8 -> t
     bsAtIndex :: t -> Int -> Word8
-
     bsTake :: Int -> t -> t
     bsSplitAt :: Int -> t -> (t, t)
 
@@ -53,6 +49,19 @@ instance ByteStringLike BS.ByteString where
     bsAtIndex = BS.index
     bsTake = BS.take
     bsSplitAt = BS.splitAt
+
+instance ByteStringLike SBS.ShortByteString where
+    toByteString = fromShort
+    fromByteString = toShort
+    bsLength = SBS.length
+    bsReplicate len w = toShort (BS.replicate (fromIntegral len) w)
+    bsAtIndex = SBS.index
+    bsTake n sbs =
+        toShort (BS.take n (fromShort sbs))
+    bsSplitAt n sbs =
+        let (a, b) = BS.splitAt n (fromShort sbs)
+         in (toShort a, toShort b)
+
 instance ByteStringLike LBS.ByteString where
     toByteString = toStrict
     fromByteString = fromStrict
@@ -61,6 +70,10 @@ instance ByteStringLike LBS.ByteString where
     bsAtIndex lbs i = LBS.index lbs (fromIntegral i)
     bsTake n = LBS.take (fromIntegral n)
     bsSplitAt n = LBS.splitAt (fromIntegral n)
+
+-- =========================================================================
+-- SIZED STRING INTERFACE
+-- =========================================================================
 
 class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
     type Impl t
@@ -83,20 +96,43 @@ class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
         | otherwise = Nothing
 
 instance SizedString SizedByteString n where
-    type Impl SizedByteString = BS.ByteString
+    type Impl SizedByteString = SBS.ShortByteString
 
-    fromSized (UnsafeMkSizedByteString bs) = bs
-    snocSized (UnsafeMkSizedByteString bs) b = UnsafeMkSizedByteString (BS.snoc bs b)
-    appendSized (UnsafeMkSizedByteString bs) (UnsafeMkSizedByteString bs') = UnsafeMkSizedByteString (bs `BS.append` bs')
+    fromSized (SizedByteString sbs) = sbs
 
-    unsafeMkSized = UnsafeMkSizedByteString
+    snocSized (SizedByteString sbs) b =
+        SizedByteString (toShort $ BS.snoc (fromShort sbs) b)
 
+    appendSized (SizedByteString s1) (SizedByteString s2) =
+        SizedByteString (toShort $ BS.append (fromShort s1) (fromShort s2))
+
+    unsafeMkSized = SizedByteString
+
+-- Instance for the Lazy wrapper
 instance SizedString SizedLazyByteString n where
     type Impl SizedLazyByteString = LBS.ByteString
     fromSized (SizedLazyByteString lbs) = lbs
     snocSized (SizedLazyByteString lbs) b = SizedLazyByteString (lbs `LBS.snoc` b)
     appendSized (SizedLazyByteString lbs) (SizedLazyByteString lbs') = SizedLazyByteString (lbs `LBS.append` lbs')
     unsafeMkSized = SizedLazyByteString
+
+toStrictBS :: SizedByteString n -> BS.ByteString
+toStrictBS (SizedByteString sbs) = fromShort sbs
+
+lazyToStrict :: SizedLazyByteString n -> SizedByteString n
+lazyToStrict (SizedLazyByteString lbs) = SizedByteString (toShort (toStrict lbs))
+
+strictToLazy :: SizedByteString n -> SizedLazyByteString n
+strictToLazy (SizedByteString sbs) = SizedLazyByteString (fromStrict (fromShort sbs))
+
+unsafeSized :: BS.ByteString -> SizedByteString n
+unsafeSized bs = SizedByteString (toShort bs)
+
+randomSized :: forall n m. (KnownNat n, MonadRandom m) => m (SizedByteString n)
+randomSized = do
+    let len = fromIntegral (natVal (Proxy @n))
+    bs <- getRandomBytes len
+    return $ SizedByteString (toShort bs)
 
 index :: forall i n t. (KnownNat i, KnownNat n, i < n, SizedString t n) => t n -> Word8
 index sized = bsAtIndex (fromSized sized) (natToNum @i)
@@ -120,7 +156,6 @@ splitAt sized =
         (bs1, bs2) = bsSplitAt len bs
      in (unsafeMkSized bs1, unsafeMkSized bs2)
 
--- | Splits a SizedByteString of length 'n' into 'k' equal parts of length 'n / k'
 splitInto ::
     forall k n t.
     ( KnownNat k
@@ -134,10 +169,10 @@ splitInto ::
 splitInto sized =
     let bs = fromSized sized
         partLen = natToNum @(n `Div` k) @Int
-        go bstr
-            | bsLength bstr == 0 = []
+        go bStr
+            | bsLength bStr == 0 = []
             | otherwise =
-                let (partBs, restBs) = bsSplitAt partLen bstr
+                let (partBs, restBs) = bsSplitAt partLen bStr
                  in unsafeMkSized partBs : go restBs
      in go bs
 
@@ -145,13 +180,15 @@ natToNum :: forall n num. (KnownNat n, Num num) => num
 natToNum = fromIntegral (natVal (Proxy @n))
 
 replicate :: forall n t. (KnownNat n, SizedString t n) => Word8 -> t n
-replicate b = unsafeMkSized (bsReplicate (natToNum @n @Int64) b)
+replicate b =
+    let len = natToNum @n @Int
+     in unsafeMkSized (bsReplicate (fromIntegral len) b)
 
 mkSizedOrError :: forall n t. (KnownNat n, SizedString t n, HasCallStack) => Impl t -> t n
 mkSizedOrError bs =
     case mkSized bs of
         Just sized -> sized
-        Nothing -> error $ "ByteString has incorrect length for SizedByteString: expected " <> show expectedLen <> ", got " <> show (bsLength bs)
+        Nothing -> error $ "Incorrect length for SizedByteString: expected " <> show expectedLen <> ", got " <> show (bsLength bs)
     where
         expectedLen = natVal (Proxy @n)
 
@@ -162,12 +199,24 @@ getSizedByteString :: forall n. (KnownNat n) => Get (SizedByteString n)
 getSizedByteString = do
     let len = natToNum @n @Int
     bs <- getByteString len
-    case mkSized bs of
+    case mkSized (toShort bs) of
         Just sized -> pure sized
         Nothing -> fail $ "Failed to get SizedByteString of length " <> show len
+
+-- IO and FFI functions
 
 create :: forall n. (KnownNat n) => (Ptr Word8 -> IO ()) -> IO (SizedByteString n)
 create action = do
     let size = natToNum @n @Int
     bs <- BS.create size action
-    pure (mkSizedOrError bs)
+    pure (unsafeSized bs)
+
+useAsCString :: forall n a. (KnownNat n) => SizedByteString n -> (CString -> IO a) -> IO a
+useAsCString (SizedByteString sbs) action = do
+    let bs = fromShort sbs
+    BS.useAsCString bs action
+
+useAsCStringLen :: forall n a. (KnownNat n) => SizedByteString n -> ((CString, Int) -> IO a) -> IO a
+useAsCStringLen (SizedByteString sbs) action = do
+    let bs = fromShort sbs
+    BS.useAsCStringLen bs action

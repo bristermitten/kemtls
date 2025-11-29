@@ -4,6 +4,8 @@ import Control.Concurrent (forkFinally, modifyMVar_)
 import Control.Exception qualified as E
 
 import Constants
+import Control.Exception.Context qualified as E
+import Control.Monad (foldM)
 import Control.Monad.Except (MonadError, throwError)
 import Cookie
 import Crypto.Random
@@ -53,7 +55,7 @@ kemtlsServer mhost port serverSecretKey = do
 
         loop stateVar sock = infinitely $
             E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
-                putStrLn $ "Connection from " ++ show peer
+                putStrLn $ "Connection from " <> show peer
 
                 serverState <- readMVar stateVar
                 let cid = length (connectedClients serverState) + 1
@@ -65,7 +67,12 @@ kemtlsServer mhost port serverSecretKey = do
                     (runStateT (runReaderT handleConnection stateVar) clientLocalState)
                     ( \result -> do
                         case result of
-                            Left ex -> putStrLn $ "Thread crashed:\n" <> displayException ex
+                            Left ex ->
+                                putStrLn $
+                                    "Thread crashed:\n"
+                                        <> displayException ex
+                                        <> "\n"
+                                        <> E.displayExceptionContext (E.someExceptionContext ex)
                             Right _ -> putStrLn "Thread finished normally"
                         cleanupClient stateVar cid conn
                     )
@@ -86,7 +93,7 @@ registerClient = do
 
     liftIO $ modifyMVar_ stateVar $ \st -> do
         let newClients = client : connectedClients st
-        putStrLn $ "Client registered. Clients connected: " ++ show (length newClients)
+        putStrLn $ "Client registered. Clients connected: " <> show (length newClients)
         return $ st {connectedClients = newClients}
 
 setClientState :: (MonadTrans t, MonadState ClientInfo m) => ClientState -> t m ()
@@ -98,7 +105,7 @@ cleanupClient stateVar cid sock = do
     close sock
     modifyMVar_ stateVar $ \st -> do
         let remainingClients = filter (\c -> clientId c /= cid) (connectedClients st)
-        putStrLn $ "Client disconnected. Clients connected: " ++ show (length remainingClients)
+        putStrLn $ "Client disconnected. Clients connected: " <> show (length remainingClients)
         return $ st {connectedClients = remainingClients}
 
 handleConnection :: ConnectionM ()
@@ -111,10 +118,10 @@ handleConnection = do
         Left err -> liftIO $ putTextLn $ "Client Error: " <> err
         Right _ -> liftIO $ putTextLn "Client Finished successfully."
 
-handshakeLoop :: ExceptT Text ConnectionM ()
+handshakeLoop :: (HasCallStack) => ExceptT Text ConnectionM ()
 handshakeLoop = do
     client <- lift Prelude.get
-    putStrLn $ "Client " ++ show (clientId client) ++ " in state: " ++ show (clientState client)
+    putStrLn $ "Client " <> show (clientId client) <> " in state: " <> show (clientState client)
     case clientState client of
         Initialised -> do
             putStrLn "Waiting for Query0..."
@@ -147,8 +154,8 @@ processQuery0 = do
     print query0
 
     -- generate 32 byte seed
-    seed <- liftIO $ randomSized @CookieSeedBytes
-    putStrLn $ "Generated Reply0.seed: " ++ show seed
+    let seed = SizedBS.replicate @CookieSeedBytes 0xAA -- for testing, use a fixed seed
+    putStrLn $ "Generated Reply0.seed: " <> show seed
 
     (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss seed 0
 
@@ -189,7 +196,16 @@ processQuery1 = do
             -- compute c_i,j
             syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
 
-            (cookie1, nonceN) <- liftIO $ createCookie1 (cookieSecretKey globalState) syndrome (q1Nonce _packet) rowPos colPos 0
+            (cookie1, nonceN) <-
+                liftIO $
+                    createCookie1
+                        (cookieSecretKey globalState)
+                        ss
+                        syndrome
+                        (q1Nonce _packet)
+                        rowPos
+                        colPos
+                        0
 
             let reply =
                     Reply1
@@ -198,11 +214,11 @@ processQuery1 = do
                         , r1Nonce = nonceM `SizedBS.appendSized` Nonce.phase1S2CNonce rowPos colPos
                         }
             liftIO $ sendPacket client ss reply
-            putStrLn $ "Processed Block (" ++ show rowPos ++ "," ++ show colPos ++ ")"
+            putStrLn $ "Processed Block (" <> show rowPos <> "," <> show colPos <> ")"
     putStrLn "Completed processing Query1."
     setClientState (SentReply1 ss)
 
-processQuery2 :: ExceptT Text ConnectionM ()
+processQuery2 :: (HasCallStack) => ExceptT Text ConnectionM ()
 processQuery2 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
@@ -211,9 +227,8 @@ processQuery2 = do
             _ -> error "Invalid client state in processQuery1"
 
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
-        -- i
         packet <- lift $ Protocol.recvPacket @Query2 conn ss
-        putStrLn $ "Received Query2 packet: " ++ show packet
+        putStrLn $ "Received Query2 packet: " <> show packet
 
         globalState <- lift getGlobalState
         (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
@@ -223,29 +238,48 @@ processQuery2 = do
                     Just pos -> pos
                     Nothing -> error "Invalid nonce in Query2"
 
+        expect (piecePos == i) ("Invalid piece position in Query2, expected " <> show i <> " but got " <> show piecePos)
+
         syndrome <- liftIO $ computePieceSyndrome e piecePos
+        putStrLn $ "e: " <> show e
+        putStrLn $ "Computed initial syndrome for piece " <> show piecePos <> ": " <> show syndrome
 
-        cookiesAndNonces <- flip Fixed.mapM (query2Cookies packet) $ \cookie1 -> do
-            (decoded, nonceM) <-
-                liftIO $
-                    decodeCookie1
-                        (cookieSecretKey globalState)
-                        cookie1
-                        (query2Nonce packet)
-                        (piecePos * mctinyV - mctinyV + 1)
-                        (piecePos * mctinyV)
+        -- 2. Aggregate all 56 cookies into the accumulator
+        -- We use 'foldM' to pass the updating 'currentSynd' through the loop.
+        finalSyndrome <-
+            liftIO $
+                foldM
+                    ( \currentSynd (index, cookie1) -> do
+                        -- Calculate coordinates
+                        -- index is 0..55
+                        let rowInPiece = index `div` 8 -- 0..6
+                        let colInRow = index `mod` 8 -- 0..7
 
-            syndrome2 <- liftIO $ absorbSyndromeIntoPiece syndrome decoded piecePos
-            pure (syndrome2, nonceM)
+                        -- Calculate Absolute Row/Col for Nonce reconstruction
+                        -- (Assuming piecePos is 0-based 0..16)
+                        -- Note: Adjust +1 if your decodeCookie1 expects 1-based indices
+                        let absRow = ((piecePos - 1) * mctinyV) + rowInPiece + 1
+                        let absCol = colInRow + 1
 
-        let cJs = Fixed.map fst cookiesAndNonces
-        let _noncesM = Fixed.map snd cookiesAndNonces
+                        (synd1, _) <-
+                            decodeCookie1
+                                (cookieSecretKey globalState)
+                                ss
+                                cookie1
+                                (query2Nonce packet)
+                                absRow
+                                absCol
+
+                        absorbSyndromeIntoPiece currentSynd synd1 rowInPiece
+                    )
+                    syndrome
+                    (zip [0 ..] (Fixed.toList $ query2Cookies packet))
 
         liftIO $
             sendPacket client ss $
                 Reply2
                     { r2Cookie0 = query2Cookie0 packet
-                    , r2CJs = cJs
+                    , r2Syndrome2 = finalSyndrome
                     , r2Nonce = nonceM || Nonce.phase2S2CNonce piecePos
                     }
 
@@ -264,10 +298,12 @@ processQuery3 = do
     (ss, s_m, s, nonceM, _E) <- lift $ handleC0AndMAndSM (query3Cookie0 packet) (query3Nonce packet)
     e <- liftIO $ seedToE _E
 
-    _C <- liftIO $ mctinyHash ("2" <> fromSized e)
-    _Z <- liftIO $ mctinyHash ("1" <> fromSized e <> fromSized (query3MergedPieces packet) <> fromSized _C)
+    -- C <- hash(2, e)
+    _C <- liftIO $ mctinyHash (one 2 <> toStrictBS e)
+    -- Z <- hash(1, e, (c_1, c_2, ..., c_r), C)
+    _Z <- liftIO $ mctinyHash (one 1 <> toStrictBS e <> toStrictBS (query3MergedPieces packet) <> toStrictBS _C)
 
-    s_mHash <- liftIO $ mctinyHash (fromSized s_m)
+    s_mHash <- liftIO $ mctinyHash (toStrictBS s_m)
     let mNonce = nonceM || Nonce.phase3S2CNonce
     _C_Z <-
         liftIO $
@@ -280,9 +316,10 @@ processQuery3 = do
             , reply3MergedPieces = query3MergedPieces packet
             , reply3Nonce = mNonce
             }
-    putStrLn $ "Received Query3 packet: " ++ show packet
+    putStrLn $ "Received Query3 packet: " <> show packet
 
 handleC0AndMAndSM ::
+    (HasCallStack) =>
     SizedByteString CookieC0Bytes ->
     SizedByteString PacketNonceBytes ->
     ConnectionM
@@ -295,12 +332,12 @@ handleC0AndMAndSM ::
 handleC0AndMAndSM c0 nonce = do
     globalState <- getGlobalState
     (ss, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
-    let s_m :: SizedByteString SessionKeyBytes = SizedBS.replicate 0 -- current cookie key, but we don't do rotation so always 0
+    let s_m = cookieSecretKey globalState -- current cookie key, but we don't do rotation so always 0
     -- we would have to recreate C_0 here but since s_m hasn't changed there's nothing to do
     mNonce <-
         liftIO $
             randomSized @NonceRandomPartBytes
-    s <- liftIO $ mctinyHash (fromSized (s_m || e))
+    s <- liftIO $ mctinyHash (toStrictBS (s_m || ss))
 
     pure (ss, s_m, s, mNonce, e)
 
@@ -313,11 +350,11 @@ sendPacket ::
     ( McTinyPacket a
     , KnownNat (PacketSize a)
     , MonadIO m
+    , HasCallStack
     ) =>
     ClientInfo -> PacketPutContext a -> a -> m ()
 sendPacket client context packet = do
     let sock = clientSocket client
-
     liftIO $ Protocol.sendPacket sock context packet
 
 expect :: (MonadError e f) => Bool -> e -> f ()
