@@ -54,7 +54,7 @@ decodeCookie0 kCookie cookieC0 packetNonce = do
     return (sharedSecretBS, seedBS)
 
 {- | Create a phase 1 cookie
-Ci, j ← (AE(ci, j: N,2i−1,64+ j −1 : s),m mod 8)
+Ci,j ← (AE(ci,j : N,2i−1,64+j−1 : s), m mod 8)
 -}
 createCookie1 ::
     SizedByteString CookieSecretKeyBytes ->
@@ -75,3 +75,23 @@ createCookie1 kCookie syndrome packetNonce row col keyId = do
     encrypted <- encryptPacketData syndrome cookieNonce encKey
 
     return (encrypted `snocSized` keyId, cookieNonce)
+
+decodeCookie1 ::
+    -- | server cookie key (s_m)
+    SizedByteString CookieSecretKeyBytes ->
+    -- | encoded cookie data
+    SizedByteString Cookie1BlockBytes ->
+    -- | packet nonce
+    SizedByteString PacketNonceBytes ->
+    Int -> -- i (row)
+    Int -> -- j (column)
+
+    -- | decoded syndrome ci,j and nonce M
+    IO (SizedByteString McTinySyndromeBytes, SizedByteString PacketNonceBytes)
+decodeCookie1 kCookie cookie1 packetNonce i j = do
+    let (encData, _keyIdBS) = SizedBS.splitAt @(Cookie1BlockBytes - 1) cookie1
+    let baseNonce = SizedBS.take @22 packetNonce
+        cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase1S2CNonce i j
+    encKey <- mctinyHash (fromSized kCookie)
+    decrypted <- decryptPacketData encData cookieNonce encKey
+    return (decrypted, cookieNonce)

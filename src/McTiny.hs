@@ -55,6 +55,14 @@ foreign import ccall safe "mctiny_seed2e"
 foreign import ccall safe "mctiny_eblock2syndrome"
     c_mctiny_eblock2syndrome :: Ptr Word8 -> Ptr Word8 -> Ptr Word8 -> CInt -> IO ()
 
+-- void mctiny_pieceinit(unsigned char *synd2,const unsigned char *e,int p)
+foreign import ccall safe "mctiny_pieceinit"
+    c_mctiny_pieceinit :: Ptr Word8 -> Ptr Word8 -> CInt -> IO ()
+
+-- void mctiny_pieceabsorb(unsigned char *synd2,const unsigned char *synd1,int i)
+foreign import ccall safe "mctiny_pieceabsorb"
+    c_mctiny_pieceabsorb :: Ptr Word8 -> Ptr Word8 -> CInt -> IO ()
+
 -- | Generate a McEliece keypair
 generateKeypair :: IO McElieceKeypair
 generateKeypair = do
@@ -357,6 +365,7 @@ eBlockToSyndrome eBS blockBS colPos = do
                     (fromIntegral colPos)
     return $ mkSizedOrError sBS
 
+-- | Computes c_i,j ← K_i,j * e_j
 computePartialSyndrome ::
     SizedByteString CookieSeedBytes ->
     SizedByteString McTinyBlockBytes ->
@@ -365,3 +374,34 @@ computePartialSyndrome ::
 computePartialSyndrome seedBS blockBS colPos = do
     eBS <- seedToE seedBS
     eBlockToSyndrome eBS blockBS colPos
+
+computePieceSyndrome ::
+    SizedByteString CookieSeedBytes ->
+    Int -> -- piece index p
+    IO (SizedByteString McTinySyndromeBytes)
+computePieceSyndrome seedBS piecePos = do
+    eBS <- seedToE seedBS
+    sBS <- BS.create mctinySyndromeBytes $ \sPtr ->
+        BS.useAsCString (fromSized eBS) \ePtr -> do
+            c_mctiny_pieceinit
+                sPtr
+                (castPtr ePtr)
+                (fromIntegral piecePos)
+    return $ mkSizedOrError sBS
+
+absorbSyndromeIntoPiece ::
+    SizedByteString McTinySyndromeBytes ->
+    SizedByteString McTinySyndromeBytes ->
+    Int -> -- piece index i
+    IO (SizedByteString McTinySyndromeBytes) -- returns updated syndrome2
+absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
+    newSyndrome2 <- BS.create mctinySyndromeBytes $ \newSyndrome2Ptr ->
+        BS.useAsCString (fromSized synd2BS) \synd2Ptr -> do
+            copyBytes newSyndrome2Ptr (castPtr synd2Ptr) mctinySyndromeBytes
+            BS.useAsCString (fromSized synd1BS) \synd1Ptr -> do
+                c_mctiny_pieceabsorb
+                    newSyndrome2Ptr
+                    (castPtr synd1Ptr)
+                    (fromIntegral pieceIndex)
+
+    return $ mkSizedOrError newSyndrome2

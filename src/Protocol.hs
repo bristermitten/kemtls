@@ -48,7 +48,9 @@ recvExact sock n = liftIO $ go n
         go remaining = do
             chunk <- recv sock remaining
             if LBS.null chunk
-                then error "Connection closed prematurely (recvExact)"
+                then
+                    error $
+                        "Connection closed prematurely (recvExact)" <> show (n - remaining) <> " bytes received, " <> show remaining <> " bytes expected."
                 else do
                     let len = LBS.length chunk
                     rest <- go (remaining - len)

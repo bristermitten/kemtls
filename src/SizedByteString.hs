@@ -9,28 +9,28 @@ import Data.Binary.Put
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Type.Ord (type (<), type (<=))
-import GHC.TypeLits (type (+), type (-))
+import GHC.TypeLits (Div, Mod, type (+), type (-))
 
-newtype SizedByteString (n :: Nat) = SizedByteString {getSized :: BS.ByteString}
+newtype SizedByteString (n :: Nat) = UnsafeMkSizedByteString {getSized :: BS.ByteString}
     deriving newtype (Eq, Show, Binary)
 
 newtype SizedLazyByteString (n :: Nat) = SizedLazyByteString {getSizedLazy :: LBS.ByteString}
     deriving newtype (Eq, Show, Binary)
 
 lazyToStrict :: SizedLazyByteString n -> SizedByteString n
-lazyToStrict (SizedLazyByteString lbs) = SizedByteString (toStrict lbs)
+lazyToStrict (SizedLazyByteString lbs) = UnsafeMkSizedByteString (toStrict lbs)
 
 strictToLazy :: SizedByteString n -> SizedLazyByteString n
-strictToLazy (SizedByteString bs) = SizedLazyByteString (fromStrict bs)
+strictToLazy (UnsafeMkSizedByteString bs) = SizedLazyByteString (fromStrict bs)
 
 unsafeSized :: BS.ByteString -> SizedByteString n
-unsafeSized = SizedByteString
+unsafeSized = UnsafeMkSizedByteString
 
 randomSized :: forall n m. (KnownNat n, MonadRandom m) => m (SizedByteString n)
 randomSized = do
     let len = fromIntegral (natVal (Proxy @n))
     bs <- getRandomBytes len
-    return $ SizedByteString bs
+    return $ UnsafeMkSizedByteString bs
 
 class ByteStringLike t where
     toByteString :: t -> BS.ByteString
@@ -80,11 +80,11 @@ class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
 instance SizedString SizedByteString n where
     type Impl SizedByteString = BS.ByteString
 
-    fromSized (SizedByteString bs) = bs
-    snocSized (SizedByteString bs) b = SizedByteString (BS.snoc bs b)
-    appendSized (SizedByteString bs) (SizedByteString bs') = SizedByteString (bs `BS.append` bs')
+    fromSized (UnsafeMkSizedByteString bs) = bs
+    snocSized (UnsafeMkSizedByteString bs) b = UnsafeMkSizedByteString (BS.snoc bs b)
+    appendSized (UnsafeMkSizedByteString bs) (UnsafeMkSizedByteString bs') = UnsafeMkSizedByteString (bs `BS.append` bs')
 
-    unsafeMkSized = SizedByteString
+    unsafeMkSized = UnsafeMkSizedByteString
 
 instance SizedString SizedLazyByteString n where
     type Impl SizedLazyByteString = LBS.ByteString
@@ -114,6 +114,28 @@ splitAt sized =
         len = natToNum @m @Int
         (bs1, bs2) = bsSplitAt len bs
      in (unsafeMkSized bs1, unsafeMkSized bs2)
+
+-- | Splits a SizedByteString of length 'n' into 'k' equal parts of length 'n / k'
+splitInto ::
+    forall k n t.
+    ( KnownNat k
+    , KnownNat n
+    , n `Mod` k ~ 0
+    , SizedString t n
+    , SizedString t (n `Div` k)
+    , KnownNat (Div n k)
+    ) =>
+    t n -> [t (n `Div` k)]
+splitInto sized =
+    let bs = fromSized sized
+        partLen = natToNum @(n `Div` k) @Int
+        go bstr
+            | bsLength bstr == 0 = []
+            | otherwise =
+                let (partBs, restBs) = bsSplitAt partLen bstr
+                 in unsafeMkSized partBs : go restBs
+     in go bs
+
 natToNum :: forall n num. (KnownNat n, Num num) => num
 natToNum = fromIntegral (natVal (Proxy @n))
 

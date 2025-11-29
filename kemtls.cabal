@@ -55,6 +55,7 @@ common shared
     , data-default
     , directory
     , filepath
+    , fixed-vector
     , mtl
     , network
     , network-transport

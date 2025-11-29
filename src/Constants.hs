@@ -136,3 +136,10 @@ mctinySyndromeBytes = mctiny_YBYTES
 
 type McTinySyndromeBytes :: Nat
 type McTinySyndromeBytes = mctiny_YBYTES
+
+#define mctiny_V 7
+mctinyV :: (Num a) => a
+mctinyV = mctiny_V
+
+type McTinyV :: Nat
+type McTinyV = mctiny_V

@@ -34,6 +34,10 @@ data ClientCookie = ClientCookie
     }
 
 data ClientState
-    = Initialised
-    | SentReply0 SharedSecret
+    = -- | In phase 0, waiting to send Reply0
+      Initialised
+    | -- | Reply 0 sent, receiving Query1s
+      SentReply0 SharedSecret
+    | SentReply1 SharedSecret
+    | Completed
     deriving stock (Show)

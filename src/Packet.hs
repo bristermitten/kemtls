@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NoStarIsType #-}
 
 module Packet where
 
@@ -10,7 +11,9 @@ import Data.Binary.Put
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import GHC.TypeLits (type (+))
+import Data.Vector.Fixed (fromList', fromListM)
+import Data.Vector.Fixed.Boxed (Vec)
+import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decap, decryptPacketData, encryptPacketData)
 import Server.State (ServerState (..))
 import SizedByteString as SizedBS
@@ -282,4 +285,109 @@ instance McTinyPacket Reply1 where
                 { r1Cookie0 = cookie0
                 , r1Cookie1 = cookie1
                 , r1Nonce = nonce
+                }
+
+data Query2 = Query2
+    { query2Cookies :: Vec ExpectedQuery2CookieLength (SizedByteString Cookie1BlockBytes) -- list of all C_i,j in the range
+    , query2Cookie0 :: SizedByteString CookieC0Bytes
+    , query2Nonce :: SizedByteString PacketNonceBytes
+    }
+    deriving stock (Show)
+
+-- query2Cookies should have this length i think
+-- at least it does when testing but i'm not sure how consistent it is
+-- it's derived from: C_iv−v+1,1,...,C_iv,l
+type ExpectedQuery2CookieLength = McTinyColBlocks * McTinyV
+expectedQuery2CookieLength :: Int
+expectedQuery2CookieLength = mcTinyColBlocks * mctinyV
+
+instance McTinyPacket Query2 where
+    type
+        PacketSize Query2 =
+            EncryptedSize (ExpectedQuery2CookieLength * Cookie1BlockBytes)
+                + CookieC0Bytes
+                + PacketNonceBytes
+    type PacketPutContext Query2 = SharedSecret
+    type PacketGetContext Query2 = SharedSecret
+    type PacketGetResult Query2 = Query2
+
+    putPacket ss (Query2 cookies cookie0 nonce) = do
+        let concatenatedCookies =
+                mkSizedOrError @(ExpectedQuery2CookieLength * Cookie1BlockBytes) $
+                    mconcat (fmap fromSized (toList cookies))
+        let payload = concatenatedCookies `appendSized` cookie0
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedPayload, cookie0, nonce) =
+                flip runGet input $ do
+                    encryptedPayload <-
+                        getSizedByteString
+                            @( EncryptedSize
+                                (ExpectedQuery2CookieLength * Cookie1BlockBytes)
+                             )
+                    cookie0 <- getSizedByteString @CookieC0Bytes
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (encryptedPayload, cookie0, nonce)
+        decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
+
+        let cookies = SizedBS.splitInto @ExpectedQuery2CookieLength decryptedPayload
+
+        let cookiesVec = fromList' cookies
+        pure $
+            Query2
+                { query2Cookies = cookiesVec
+                , query2Cookie0 = cookie0
+                , query2Nonce = nonce
+                }
+
+data Reply2 = Reply2
+    { r2Cookie0 :: SizedByteString CookieC0Bytes
+    , r2CJs :: Vec ExpectedQuery2CookieLength (SizedByteString McTinySyndromeBytes)
+    , r2Nonce :: SizedByteString PacketNonceBytes
+    }
+    deriving stock (Show)
+
+instance McTinyPacket Reply2 where
+    type
+        PacketSize Reply2 =
+            EncryptedSize (ExpectedQuery2CookieLength * McTinySyndromeBytes)
+                + CookieC0Bytes
+                + PacketNonceBytes
+    type PacketPutContext Reply2 = SharedSecret
+    type PacketGetContext Reply2 = SharedSecret
+    type PacketGetResult Reply2 = Reply2
+
+    putPacket ss (Reply2 cookie0 cjs nonce) = do
+        let concatenatedCJs =
+                mkSizedOrError @(ExpectedQuery2CookieLength * McTinySyndromeBytes) $
+                    mconcat (fmap fromSized (toList cjs))
+        let payload = concatenatedCJs `appendSized` cookie0
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedPayload, cookie0, nonce) =
+                flip runGet input $ do
+                    encryptedPayload <-
+                        getSizedByteString
+                            @( EncryptedSize
+                                (ExpectedQuery2CookieLength * McTinySyndromeBytes)
+                             )
+                    cookie0 <- getSizedByteString @CookieC0Bytes
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (encryptedPayload, cookie0, nonce)
+        decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
+        let cjs = SizedBS.splitInto @ExpectedQuery2CookieLength decryptedPayload
+        let cjsVec = fromList' cjs
+        pure $
+            Reply2
+                { r2Cookie0 = cookie0
+                , r2CJs = cjsVec
+                , r2Nonce = nonce
                 }
