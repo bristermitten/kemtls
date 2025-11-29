@@ -51,8 +51,6 @@ void randombytes(unsigned char *x, unsigned long long xlen)
 
 int crypto_hash_shake256(unsigned char *out, const unsigned char *in, unsigned long long inlen)
 {
-    // PQClean's shake256 signature: (out, outlen, in, inlen)
-    // We request 32 bytes (crypto_hash_shake256_BYTES)
     shake256(out, 32, in, inlen);
     return 0;
 }

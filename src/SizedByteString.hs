@@ -7,8 +7,10 @@ import Data.Binary
 import Data.Binary.Get (getByteString)
 import Data.Binary.Put
 import Data.ByteString qualified as BS
+import Data.ByteString.Internal qualified as BS (create)
 import Data.ByteString.Lazy qualified as LBS
 import Data.Type.Ord (type (<), type (<=))
+import Foreign (Ptr)
 import GHC.TypeLits (Div, Mod, type (+), type (-))
 
 newtype SizedByteString (n :: Nat) = UnsafeMkSizedByteString {getSized :: BS.ByteString}
@@ -71,6 +73,9 @@ class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
 
     snocSized :: t n -> Word8 -> t (n + 1)
     appendSized :: t n -> t m -> t (n + m)
+
+    (||) :: t n -> t m -> t (n + m)
+    (||) = appendSized
 
     mkSized :: (KnownNat n) => Impl t -> Maybe (t n)
     mkSized bs
@@ -142,7 +147,7 @@ natToNum = fromIntegral (natVal (Proxy @n))
 replicate :: forall n t. (KnownNat n, SizedString t n) => Word8 -> t n
 replicate b = unsafeMkSized (bsReplicate (natToNum @n @Int64) b)
 
-mkSizedOrError :: forall n t. (KnownNat n, SizedString t n) => Impl t -> t n
+mkSizedOrError :: forall n t. (KnownNat n, SizedString t n, HasCallStack) => Impl t -> t n
 mkSizedOrError bs =
     case mkSized bs of
         Just sized -> sized
@@ -160,3 +165,9 @@ getSizedByteString = do
     case mkSized bs of
         Just sized -> pure sized
         Nothing -> fail $ "Failed to get SizedByteString of length " <> show len
+
+create :: forall n. (KnownNat n) => (Ptr Word8 -> IO ()) -> IO (SizedByteString n)
+create action = do
+    let size = natToNum @n @Int
+    bs <- BS.create size action
+    pure (mkSizedOrError bs)

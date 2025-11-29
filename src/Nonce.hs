@@ -53,3 +53,18 @@ decodePhase2C2SNonce (UnsafeMkSizedByteString bs) =
     case unpack bs of
         [b1, b2] | b2 == 64 + 32 -> Just (fromIntegral (b1 `div` 2) + 1)
         _ -> Nothing
+
+phase2S2CNonce :: Int -> SizedByteString 2
+phase2S2CNonce i =
+    UnsafeMkSizedByteString
+        ( pack
+            [ fromIntegral (2 * i - 1)
+            , 64 + 32
+            ]
+        )
+
+phase3C2SNonce :: SizedByteString 2
+phase3C2SNonce = UnsafeMkSizedByteString (pack [254, 255])
+
+phase3S2CNonce :: SizedByteString 2
+phase3S2CNonce = UnsafeMkSizedByteString (pack [255, 255])

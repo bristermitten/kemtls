@@ -11,14 +11,14 @@ import Data.Binary.Put
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Data.Vector.Fixed (fromList', fromListM)
+import Data.Vector.Fixed (fromList')
 import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decap, decryptPacketData, encryptPacketData)
 import Server.State (ServerState (..))
 import SizedByteString as SizedBS
 import Utils
-import Prelude hiding (ByteString, put)
+import Prelude hiding (ByteString, put, (||))
 
 data ClientHello
     = ClientHello
@@ -109,7 +109,7 @@ newtype Handshake
 
 data Query0
     = Query0
-    { query0Nonce :: SizedByteString PacketNonceBytes -- last 2 bytes zeroed
+    { query0NonceR :: SizedByteString PacketNonceBytes -- R from the paper
     , query0ServerPKHash :: SizedByteString HashBytes -- sha3 hash of server's static public key
     , query0CipherText :: SizedByteString 226 -- encapsulation of server's static key
     , query0Extensions :: [SizedByteString 0] -- currently unused, should be empty
@@ -119,7 +119,7 @@ data Query0
 data Query1
     = Query1
     { q1Block :: SizedByteString McTinyBlockBytes -- 1kb chunk of the public key
-    , q1Nonce :: SizedByteString PacketNonceBytes -- should be 24 bytes long with last 2 bytes encapsulating row and col
+    , q1Nonce :: SizedByteString PacketNonceBytes -- N
     , q1Cookie0 :: SizedByteString CookieC0Bytes
     }
     deriving stock (Show)
@@ -159,16 +159,14 @@ instance McTinyPacket Query0 where
 
     getPacket serverState input = do
         let (mac, encrypted, pkHash, ct, nonce) =
-                runGet
-                    ( do
-                        mac <- getSizedByteString @16
-                        encrypted <- getSizedByteString @PacketExtensionsBytes
-                        pkHash <- getSizedByteString @HashBytes
-                        ct <- getSizedByteString @CiphertextBytes
-                        nonce <- getSizedByteString @PacketNonceBytes
-                        pure (mac, encrypted, pkHash, ct, nonce)
-                    )
-                    input
+                flip runGet input $ do
+                    mac <- getSizedByteString @16
+                    encrypted <- getSizedByteString @PacketExtensionsBytes
+                    pkHash <- getSizedByteString @HashBytes
+                    ct <- getSizedByteString @CiphertextBytes
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (mac, encrypted, pkHash, ct, nonce)
+
         -- make sure last 2 bytes of nonce are zero
         guard (SizedBS.index @22 nonce == 0 && SizedBS.index @23 nonce == 0)
 
@@ -179,7 +177,7 @@ instance McTinyPacket Query0 where
 
         pure
             ( Query0
-                { query0Nonce = nonce
+                { query0NonceR = nonce
                 , query0ServerPKHash = pkHash
                 , query0CipherText = ct
                 , query0Extensions = [] -- no extensions supported
@@ -390,4 +388,77 @@ instance McTinyPacket Reply2 where
                 { r2Cookie0 = cookie0
                 , r2CJs = cjsVec
                 , r2Nonce = nonce
+                }
+
+data Query3 = Query3
+    { query3MergedPieces :: SizedByteString McTinyColBytes
+    , query3Nonce :: SizedByteString PacketNonceBytes
+    , query3Cookie0 :: SizedByteString CookieC0Bytes
+    }
+    deriving stock (Show)
+
+instance McTinyPacket Query3 where
+    type PacketSize Query3 = EncryptedSize McTinyColBytes + CookieC0Bytes + PacketNonceBytes
+    type PacketPutContext Query3 = SharedSecret
+    type PacketGetContext Query3 = SharedSecret
+    type PacketGetResult Query3 = Query3
+
+    putPacket ss (Query3 mergedPieces nonce cookie0) = do
+        let payload = mergedPieces `appendSized` cookie0
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedPayload, cookie0, nonce) =
+                flip runGet input $ do
+                    encryptedPayload <- getSizedByteString @(EncryptedSize McTinyColBytes)
+                    cookie0 <- getSizedByteString @CookieC0Bytes
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (encryptedPayload, cookie0, nonce)
+        mergedPieces <- liftIO $ decryptPacketData encryptedPayload nonce ss
+        pure $
+            Query3
+                { query3MergedPieces = mergedPieces
+                , query3Nonce = nonce
+                , query3Cookie0 = cookie0
+                }
+
+data Reply3 = Reply3
+    { reply3C_z :: SizedByteString Cookie9Bytes
+    , reply3MergedPieces :: SizedByteString McTinyColBytes
+    , reply3C :: SizedByteString HashBytes
+    , reply3Nonce :: SizedByteString PacketNonceBytes
+    }
+    deriving stock (Show)
+
+instance McTinyPacket Reply3 where
+    type PacketSize Reply3 = EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes) + PacketNonceBytes
+    type PacketPutContext Reply3 = SharedSecret
+    type PacketGetContext Reply3 = SharedSecret
+    type PacketGetResult Reply3 = Reply3
+
+    putPacket ss (Reply3 c_z c mergedPieces nonce) = do
+        let payload = c_z || mergedPieces || c
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putSizedByteString nonce
+
+    getPacket ss input = do
+        let (encryptedPayload, nonce) =
+                flip runGet input $ do
+                    encryptedPayload <- getSizedByteString @(EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes))
+                    nonce <- getSizedByteString @PacketNonceBytes
+                    pure (encryptedPayload, nonce)
+        decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
+        let (c_z, rest) = SizedBS.splitAt @Cookie9Bytes decryptedPayload
+        let (mergedPieces, c) = SizedBS.splitAt @McTinyColBytes rest
+        pure $
+            Reply3
+                { reply3C_z = c_z
+                , reply3MergedPieces = mergedPieces
+                , reply3C = c
+                , reply3Nonce = nonce
                 }

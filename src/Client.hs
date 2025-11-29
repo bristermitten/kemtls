@@ -14,15 +14,25 @@ data ClientEnv = ClientEnv
     { envSocket :: Socket
     , envSharedSecret :: SharedSecret -- the result of ENC(pk),
     , envServerPublicKey :: McEliecePublicKey
+    , localKeypair :: McElieceKeypair
+    -- ^ Client's keypair (k, K)
     }
 
 type ClientM a = ReaderT ClientEnv (StateT ClientState IO) a
 
-runClient :: Maybe HostName -> ServiceName -> SharedSecret -> McEliecePublicKey -> ClientState -> ClientM a -> IO a
-runClient mhost port ss serverPK initialState action = do
+runClient ::
+    Maybe HostName ->
+    ServiceName ->
+    SharedSecret ->
+    McEliecePublicKey ->
+    McElieceKeypair ->
+    ClientState ->
+    ClientM a ->
+    IO a
+runClient mhost port ss serverPK localKP initialState action = do
     addr <- resolve
     E.bracket (open addr) close $ \sock -> do
-        let env = ClientEnv sock ss serverPK
+        let env = ClientEnv sock ss serverPK localKP
         evalStateT (runReaderT action env) initialState
     where
         resolve = do

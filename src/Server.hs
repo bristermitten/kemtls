@@ -8,13 +8,14 @@ import Control.Monad.Except (MonadError, throwError)
 import Cookie
 import Crypto.Random
 import Data.Vector.Fixed qualified as Fixed
-import McTiny (McElieceSecretKey, absorbSyndromeIntoPiece, computePartialSyndrome, computePieceSyndrome)
+import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, computePieceSyndrome, encryptPacketData, mctinyHash, seedToE)
 import Network.Socket
 import Nonce qualified
 import Packet
 import Protocol qualified
 import Server.State
 import SizedByteString as SizedBS
+import Prelude hiding ((||))
 
 type ServerEnv = MVar ServerState
 type ConnectionM = ReaderT ServerEnv (StateT ClientInfo IO)
@@ -88,9 +89,9 @@ registerClient = do
         putStrLn $ "Client registered. Clients connected: " ++ show (length newClients)
         return $ st {connectedClients = newClients}
 
-updateClientState :: (MonadTrans t, MonadState ClientInfo m) => (ClientState -> ClientState) -> t m ()
-updateClientState transition = do
-    lift $ modify $ \c -> c {clientState = transition (clientState c)}
+setClientState :: (MonadTrans t, MonadState ClientInfo m) => ClientState -> t m ()
+setClientState newState = do
+    lift $ modify $ \c -> c {clientState = newState}
 
 cleanupClient :: MVar ServerState -> Int -> Socket -> IO ()
 cleanupClient stateVar cid sock = do
@@ -126,6 +127,10 @@ handshakeLoop = do
         SentReply1 {} -> do
             putStrLn "Waiting for Query2..."
             processQuery2
+            handshakeLoop
+        Phase3 {} -> do
+            putStrLn "Waiting for Query3..."
+            processQuery3
         -- dont loop, handshake complete
         Completed -> do
             error "Client already completed handshake, expected no further messages."
@@ -155,7 +160,7 @@ processQuery0 = do
 
     liftIO $ sendPacket client ss packet
 
-    updateClientState (const (SentReply0 ss))
+    setClientState (SentReply0 ss)
 
 processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
@@ -168,6 +173,11 @@ processQuery1 = do
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
             _packet <- lift $ Protocol.recvPacket @Query1 conn ss
+            (ss, s_m, s, nonceM, e) <-
+                lift $
+                    handleC0AndMAndSM
+                        (q1Cookie0 _packet)
+                        (q1Nonce _packet)
 
             globalState <- lift getGlobalState
 
@@ -176,30 +186,21 @@ processQuery1 = do
                 (SizedBS.drop @22 (q1Nonce _packet) == Nonce.phase1C2SNonce rowPos colPos)
                 ("Invalid nonce in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
 
-            (s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) (q1Cookie0 _packet) (q1Nonce _packet)
-            -- we now have the shared secret s and _seed_ E
-
             -- compute c_i,j
             syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
-            print syndrome
 
-            (cookie1, nonce1) <- liftIO $ createCookie1 (cookieSecretKey globalState) syndrome (q1Nonce _packet) rowPos colPos 0
+            (cookie1, nonceN) <- liftIO $ createCookie1 (cookieSecretKey globalState) syndrome (q1Nonce _packet) rowPos colPos 0
 
-            -- create new nonce M
-            mNonce <-
-                liftIO $
-                    randomSized @NonceRandomPartBytes
-                        <&> \seed -> seed `SizedBS.appendSized` Nonce.phase1S2CNonce rowPos colPos
             let reply =
                     Reply1
                         { r1Cookie0 = q1Cookie0 _packet
                         , r1Cookie1 = cookie1
-                        , r1Nonce = mNonce
+                        , r1Nonce = nonceM `SizedBS.appendSized` Nonce.phase1S2CNonce rowPos colPos
                         }
             liftIO $ sendPacket client ss reply
             putStrLn $ "Processed Block (" ++ show rowPos ++ "," ++ show colPos ++ ")"
     putStrLn "Completed processing Query1."
-    updateClientState (const $ SentReply1 ss)
+    setClientState (SentReply1 ss)
 
 processQuery2 :: ExceptT Text ConnectionM ()
 processQuery2 = do
@@ -215,9 +216,7 @@ processQuery2 = do
         putStrLn $ "Received Query2 packet: " ++ show packet
 
         globalState <- lift getGlobalState
-        (s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) (query2Cookie0 packet) (query2Nonce packet)
-
-        putStrLn "Decoded shared secret and error from Query2."
+        (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
 
         let piecePos =
                 case Nonce.decodePhase2C2SNonce (SizedBS.drop @22 (query2Nonce packet)) of
@@ -242,25 +241,68 @@ processQuery2 = do
         let cJs = Fixed.map fst cookiesAndNonces
         let _noncesM = Fixed.map snd cookiesAndNonces
 
-        -- all noncesM should have the same M part
-        nonceM <- case Fixed.toList _noncesM of
-            [] -> error "No cookies in Query2"
-            (firstNonceM : rest) -> do
-                for_ rest $ \n -> do
-                    expect
-                        (SizedBS.drop @22 n == SizedBS.drop @22 firstNonceM)
-                        "Inconsistent nonces M in Query2 cookies"
-                return firstNonceM
-
         liftIO $
             sendPacket client ss $
                 Reply2
                     { r2Cookie0 = query2Cookie0 packet
                     , r2CJs = cJs
-                    , r2Nonce = nonceM
+                    , r2Nonce = nonceM || Nonce.phase2S2CNonce piecePos
                     }
 
-    updateClientState (const Completed)
+    setClientState (Phase3 ss)
+
+processQuery3 :: ExceptT Text ConnectionM ()
+processQuery3 = do
+    client <- lift (lift Prelude.get)
+    let conn = clientSocket client
+    let ss = case clientState client of
+            Phase3 secret -> secret
+            _ -> error "Invalid client state in processQuery3"
+
+    packet <- lift $ Protocol.recvPacket @Query3 conn ss
+
+    (ss, s_m, s, nonceM, _E) <- lift $ handleC0AndMAndSM (query3Cookie0 packet) (query3Nonce packet)
+    e <- liftIO $ seedToE _E
+
+    _C <- liftIO $ mctinyHash ("2" <> fromSized e)
+    _Z <- liftIO $ mctinyHash ("1" <> fromSized e <> fromSized (query3MergedPieces packet) <> fromSized _C)
+
+    s_mHash <- liftIO $ mctinyHash (fromSized s_m)
+    let mNonce = nonceM || Nonce.phase3S2CNonce
+    _C_Z <-
+        liftIO $
+            encryptPacketData _Z mNonce s_mHash
+                <&> (`snocSized` 0) -- m = 0
+    sendPacket client ss $
+        Reply3
+            { reply3C_z = _C_Z
+            , reply3C = _C
+            , reply3MergedPieces = query3MergedPieces packet
+            , reply3Nonce = mNonce
+            }
+    putStrLn $ "Received Query3 packet: " ++ show packet
+
+handleC0AndMAndSM ::
+    SizedByteString CookieC0Bytes ->
+    SizedByteString PacketNonceBytes ->
+    ConnectionM
+        ( SharedSecret
+        , SizedByteString SessionKeyBytes
+        , SizedByteString HashBytes
+        , SizedByteString NonceRandomPartBytes
+        , SizedByteString CookieSeedBytes
+        )
+handleC0AndMAndSM c0 nonce = do
+    globalState <- getGlobalState
+    (ss, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
+    let s_m :: SizedByteString SessionKeyBytes = SizedBS.replicate 0 -- current cookie key, but we don't do rotation so always 0
+    -- we would have to recreate C_0 here but since s_m hasn't changed there's nothing to do
+    mNonce <-
+        liftIO $
+            randomSized @NonceRandomPartBytes
+    s <- liftIO $ mctinyHash (fromSized (s_m || e))
+
+    pure (ss, s_m, s, mNonce, e)
 
 getGlobalState :: ConnectionM ServerState
 getGlobalState = do

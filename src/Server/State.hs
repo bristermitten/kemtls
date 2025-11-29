@@ -39,5 +39,6 @@ data ClientState
     | -- | Reply 0 sent, receiving Query1s
       SentReply0 SharedSecret
     | SentReply1 SharedSecret
+    | Phase3 SharedSecret
     | Completed
     deriving stock (Show)

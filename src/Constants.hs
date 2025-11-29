@@ -89,6 +89,15 @@ cookie1BlockBytes = mctiny_COOKIEBLOCKBYTES
 type Cookie1BlockBytes :: Nat
 type Cookie1BlockBytes = mctiny_COOKIEBLOCKBYTES
 
+#define mctiny_COOKIE9BYTES 49
+-- | this is actually the cookie in phase 3. no idea why it's called COOKIE9
+cookie9Bytes :: (Num a) => a
+cookie9Bytes = mctiny_COOKIE9BYTES
+
+-- | this is actually the cookie in phase 3. no idea why it's called COOKIE9
+type Cookie9Bytes :: Nat
+type Cookie9Bytes = mctiny_COOKIE9BYTES
+
 #define packet_ExtensionsBytes 512
 packetExtensionsBytes :: (Num a) => a
 packetExtensionsBytes = packet_ExtensionsBytes
@@ -143,3 +152,17 @@ mctinyV = mctiny_V
 
 type McTinyV :: Nat
 type McTinyV = mctiny_V
+
+#define mctiny_COLBYTES 194
+mctinyColBytes :: (Num a) => a
+mctinyColBytes = mctiny_COLBYTES
+
+type McTinyColBytes :: Nat
+type McTinyColBytes = mctiny_COLBYTES
+
+#define mctiny_SESSIONKEYBYTES 32
+sessionKeyBytes :: (Num a) => a
+sessionKeyBytes = mctiny_SESSIONKEYBYTES
+
+type SessionKeyBytes :: Nat
+type SessionKeyBytes = mctiny_SESSIONKEYBYTES

@@ -12,7 +12,7 @@ import Data.ByteString.Internal qualified as BS (create)
 import Foreign
 import Foreign.C.Types
 import GHC.TypeLits (type (+), type (-), type (<=))
-import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, randomSized, sizedLength)
+import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, sizedLength)
 import SizedByteString qualified as SizedBS
 
 -- int crypto_kem_mceliece6960119_keypair(unsigned char *pk, unsigned char *sk);
@@ -63,6 +63,10 @@ foreign import ccall safe "mctiny_pieceinit"
 foreign import ccall safe "mctiny_pieceabsorb"
     c_mctiny_pieceabsorb :: Ptr Word8 -> Ptr Word8 -> CInt -> IO ()
 
+-- void mctiny_mergepieces(unsigned char *synd3,const unsigned char (*synd2)[mctiny_PIECEBYTES])
+foreign import ccall safe "mctiny_mergepieces"
+    c_mctiny_mergepieces :: Ptr Word8 -> Ptr Word8 -> IO ()
+
 -- | Generate a McEliece keypair
 generateKeypair :: IO McElieceKeypair
 generateKeypair = do
@@ -88,12 +92,12 @@ encapsulate (McEliecePublicKey pkFPtr) = do
                 res <- c_enc ctPtr ssPtr pkPtr
                 when (res /= 0) $ error "McEliece Encapsulation failed!"
 
-                ct <- BS.create ciphertextBytes $ \destPtr ->
+                ct <- SizedBS.create @CiphertextBytes $ \destPtr ->
                     copyBytes destPtr ctPtr (fromIntegral ciphertextBytes)
 
-                ss <- BS.create sharedSecretBytes $ \destPtr ->
+                ss <- SizedBS.create @SharedSecretBytes $ \destPtr ->
                     copyBytes destPtr ssPtr (fromIntegral sharedSecretBytes)
-                return (mkSizedOrError ct, mkSizedOrError ss)
+                return (ct, ss)
 
 -- | Decapsulate a shared secret using the given secret key and ciphertext
 decap :: McElieceSecretKey -> Ciphertext -> IO SharedSecret
@@ -405,3 +409,19 @@ absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
                     (fromIntegral pieceIndex)
 
     return $ mkSizedOrError newSyndrome2
+
+mergePieceSyndromes ::
+    (HasCallStack) =>
+    [SizedByteString McTinySyndromeBytes] -> -- list of synd2
+    IO (SizedByteString McTinyColBytes) -- returns merged synd3
+mergePieceSyndromes synd2List = do
+    let numPieces = length synd2List
+    SizedBS.create @McTinyColBytes $ \synd3Ptr ->
+        allocaBytes (numPieces * mctinySyndromeBytes) $ \synd2ArrayPtr -> do
+            -- copy each synd2 into the array
+            forM_ (zip [0 ..] synd2List) $ \(i, synd2BS) -> do
+                BS.useAsCString (fromSized synd2BS) $ \synd2Ptr -> do
+                    let destPtr = synd2ArrayPtr `plusPtr` (i * mctinySyndromeBytes)
+                    copyBytes destPtr (castPtr synd2Ptr) mctinySyndromeBytes
+            -- call the C function
+            c_mctiny_mergepieces synd3Ptr synd2ArrayPtr
