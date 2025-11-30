@@ -23,11 +23,10 @@ createCookie0 ::
     IO (SizedByteString CookieC0Bytes, Nonce.Nonce "N")
 createCookie0 kCookie kMaster seed keyId = do
     encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
-    nonce <-
-        Nonce.parseNonce
-            <$> ( pure (SizedBS.replicate 0xAA)
-                    <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
-                )
+    nonceRandom <- liftIO $ randomSized @NonceRandomPartBytes
+    let nonce =
+            Nonce.parseNonce
+                (nonceRandom `SizedBS.appendSized` Nonce.phase0S2CNonce)
     let payload = kMaster `appendSized` seed -- S, E
     encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
     return
@@ -55,10 +54,6 @@ decodeCookie0 kCookie cookieC0 packetNonce = do
     encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
     decrypted <- decryptPacketData encData cookieNonce encKey -- DAE(...)
     let (sharedSecretBS, seedBS) = SizedBS.splitAt @SharedSecretBytes decrypted
-    when (seedBS /= SizedBS.replicate @CookieSeedBytes 0xAA) $
-        error $
-            "Cookie decode error: invalid seed: " <> show seedBS
-
     return (sharedSecretBS, seedBS)
 
 {- | Create a phase 1 cookie
@@ -96,6 +91,7 @@ decodeCookie1 ::
     Nonce.Nonce "N" ->
     Int -> -- i (row)
     Int -> -- j (column)
+
     -- | decoded syndrome ci,j and nonce M
     IO (SizedByteString McTinySyndromeBytes, Nonce.Nonce "N")
 decodeCookie1 kCookie kMaster cookie1 packetNonce i j = do

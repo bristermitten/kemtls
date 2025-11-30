@@ -37,46 +37,46 @@ kemtlsServer mhost port serverSecretKey = do
             )
 
     vacuous $ E.bracket (open addr) close (loop stateVar)
-  where
-    resolve = do
-        let hints =
-                defaultHints
-                    { addrFlags = [AI_PASSIVE]
-                    , addrSocketType = Stream
-                    , addrProtocol = 6 -- TCP
-                    }
-        head <$> getAddrInfo (Just hints) mhost (Just port)
-    open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
-        setSocketOption sock ReuseAddr 1
-        withFdSocket sock setCloseOnExecIfNeeded
-        bind sock $ addrAddress addr
-        listen sock 1024
-        putStrLn $ "Listening on port " <> port <> " on host " <> show addr
-        return sock
+    where
+        resolve = do
+            let hints =
+                    defaultHints
+                        { addrFlags = [AI_PASSIVE]
+                        , addrSocketType = Stream
+                        , addrProtocol = 6 -- TCP
+                        }
+            head <$> getAddrInfo (Just hints) mhost (Just port)
+        open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
+            setSocketOption sock ReuseAddr 1
+            withFdSocket sock setCloseOnExecIfNeeded
+            bind sock $ addrAddress addr
+            listen sock 1024
+            putStrLn $ "Listening on port " <> port <> " on host " <> show addr
+            return sock
 
-    loop stateVar sock = infinitely $
-        E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
-            putStrLn $ "Connection from " <> show peer
+        loop stateVar sock = infinitely $
+            E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
+                putStrLn $ "Connection from " <> show peer
 
-            serverState <- readMVar stateVar
-            let cid = length (connectedClients serverState) + 1
+                serverState <- readMVar stateVar
+                let cid = length (connectedClients serverState) + 1
 
-            -- Create the initial Local State for this client
-            let clientLocalState = newClient cid conn
+                -- Create the initial Local State for this client
+                let clientLocalState = newClient cid conn
 
-            forkFinally
-                (runStateT (runReaderT handleConnection stateVar) clientLocalState)
-                ( \result -> do
-                    case result of
-                        Left ex ->
-                            putStrLn $
-                                "Thread crashed:\n"
-                                    <> displayException ex
-                                    <> "\n"
-                                    <> E.displayExceptionContext (E.someExceptionContext ex)
-                        Right _ -> putStrLn "Thread finished normally"
-                    cleanupClient stateVar cid conn
-                )
+                forkFinally
+                    (runStateT (runReaderT handleConnection stateVar) clientLocalState)
+                    ( \result -> do
+                        case result of
+                            Left ex ->
+                                putStrLn $
+                                    "Thread crashed:\n"
+                                        <> displayException ex
+                                        <> "\n"
+                                        <> E.displayExceptionContext (E.someExceptionContext ex)
+                            Right _ -> putStrLn "Thread finished normally"
+                        cleanupClient stateVar cid conn
+                    )
 
 newClient :: Int -> Socket -> ClientInfo
 newClient cid sock =
@@ -95,11 +95,11 @@ registerClient = do
     liftIO $ modifyMVar_ stateVar $ \st -> do
         let newClients = client : connectedClients st
         putStrLn $ "Client registered. Clients connected: " <> show (length newClients)
-        return $ st{connectedClients = newClients}
+        return $ st {connectedClients = newClients}
 
 setClientState :: (MonadTrans t, MonadState ClientInfo m) => ClientState -> t m ()
 setClientState newState = do
-    lift $ modify $ \c -> c{clientState = newState}
+    lift $ modify $ \c -> c {clientState = newState}
 
 cleanupClient :: MVar ServerState -> Int -> Socket -> IO ()
 cleanupClient stateVar cid sock = do
@@ -107,7 +107,7 @@ cleanupClient stateVar cid sock = do
     modifyMVar_ stateVar $ \st -> do
         let remainingClients = filter (\c -> clientId c /= cid) (connectedClients st)
         putStrLn $ "Client disconnected. Clients connected: " <> show (length remainingClients)
-        return $ st{connectedClients = remainingClients}
+        return $ st {connectedClients = remainingClients}
 
 handleConnection :: ConnectionM ()
 handleConnection = do
@@ -128,15 +128,15 @@ handshakeLoop = do
             putStrLn "Waiting for Query0..."
             processQuery0
             handshakeLoop
-        SentReply0{} -> do
+        SentReply0 {} -> do
             putStrLn "Waiting for Query1..."
             processQuery1
             handshakeLoop
-        SentReply1{} -> do
+        SentReply1 {} -> do
             putStrLn "Waiting for Query2..."
             processQuery2
             handshakeLoop
-        Phase3{} -> do
+        Phase3 {} -> do
             putStrLn "Waiting for Query3..."
             processQuery3
         -- dont loop, handshake complete
@@ -155,7 +155,7 @@ processQuery0 = do
     print query0
 
     -- generate 32 byte seed
-    let seed = SizedBS.replicate @CookieSeedBytes 0xAA -- for testing, use a fixed seed
+    seed <- liftIO $ randomSized @CookieSeedBytes
     putStrLn $ "Generated Reply0.seed: " <> show seed
 
     (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss seed 0
@@ -174,7 +174,6 @@ processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
-    let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
     let ss = case clientState client of
             SentReply0 secret -> secret
             _ -> error "Invalid client state in processQuery1"
@@ -197,11 +196,6 @@ processQuery1 = do
 
             -- compute c_i,j
             syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
-
-            debugSynd <- liftIO $ computePartialSyndrome debugSeed (q1Block _packet) colPos
-
-            liftIO $ putStrLn $ "(Row " ++ show rowPos ++ ", Col " ++ show colPos ++ "): " ++ show debugSynd
-            expect (syndrome == debugSynd) ("Syndrome mismatch in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
 
             (cookie1, nonceN) <-
                 liftIO $
@@ -234,7 +228,6 @@ processQuery2 = do
 
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         packet <- lift $ Protocol.recvPacket @Query2 conn ss
-        putStrLn $ "Received Query2 packet: " <> show (i)
 
         globalState <- lift getGlobalState
         (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
