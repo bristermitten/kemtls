@@ -15,7 +15,7 @@
 
 
 - McTiny covers:
-    - client generates kp_e and sending pk_e to server
+    - client generates kp_e and stores it
     - client encaps server static pk pk_s to get ct_s and ss_s
     - server decaps ct_s to get ss_s
     - client sends pk_e in parts to server
@@ -23,3 +23,35 @@
     - sends ct_e back to client
     - who decaps ct_e to get ss_e
     
+### Encryption
+
+#### KEMTLS
+- pk_e sent unencrypted
+- ct_e sent unencrypted, certificate sent encrypted with K_1 derived from ss_e
+- ct_s sent encrypted with K_1' derived from ss_e
+- subsequent messages encrypted with keys derived from both ss_e and ss_s
+
+#### McTiny
+- extensions sent encrypted with ss_s
+- ct_e sent unencrypted
+- c_0 sent back encrypted with ss_s
+- everything else is encrypted with keys derived from ss_s
+
+
+
+## Problems
+
+- KEMTLS ClientHello wants us to send pk_e but it's too big
+- **solution?** so we do the McTiny-ing in ClientHello phase
+- this introduces a new problem: the mctiny flow generates both shared secrets at once
+    - we have less control over eg the keys we use for which encryption
+    - the order of encryption is different - KEMTLS expects most initial messages to be encrypted with the ephemeral shared secret, whereas Mctiny encrypts everything with the static shared secret
+    - is this a problem?
+        - i don't think so
+
+
+# Plan
+
+- `ClientHello` contains ciphertext ct_e instead of `pk_e`
+- then we do all the mctiny steps
+
