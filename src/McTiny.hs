@@ -12,6 +12,7 @@ import Data.ByteString.Internal qualified as BS (create)
 import Foreign
 import Foreign.C.Types
 import GHC.TypeLits (type (+), type (-), type (<=))
+import Nonce (Nonce, fullNonce)
 import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, sizedLength)
 import SizedByteString qualified as SizedBS
 
@@ -152,7 +153,7 @@ Produces a bytestring of length (16 + payload length)
 nicer version of the packet_encrypt function in packet.c
 -}
 encryptPacketData ::
-    forall payloadLen.
+    forall payloadLen tag.
     ( KnownNat payloadLen
     , KnownNat (payloadLen + 16)
     , KnownNat (HashBytes + payloadLen)
@@ -160,7 +161,7 @@ encryptPacketData ::
     , HashBytes + payloadLen - 16 ~ (payloadLen + 16)
     ) =>
     SizedByteString payloadLen ->
-    SizedByteString PacketNonceBytes ->
+    Nonce tag ->
     SizedByteString HashBytes ->
     IO (SizedByteString (payloadLen + 16))
 encryptPacketData payloadBS nonceBS keyBS = do
@@ -176,7 +177,7 @@ encryptPacketData payloadBS nonceBS keyBS = do
         SizedBS.useAsCStringLen payloadBS $ \(payloadPtr, copyLen) ->
             copyBytes (bufPtr `plusPtr` hashBytes) (castPtr payloadPtr) copyLen
         -- call xsalsa20_xor
-        SizedBS.useAsCString nonceBS $ \tempNoncePtr -> do
+        SizedBS.useAsCString (fullNonce nonceBS) $ \tempNoncePtr -> do
             SizedBS.useAsCString keyBS $ \tempKeyPtr -> do
                 -- Call C function with the safe temp pointers
                 res <-
@@ -218,7 +219,7 @@ int packet_decrypt(const unsigned char *n,const unsigned char *k)
 }
 -}
 decryptPacketData ::
-    forall payloadLen.
+    forall payloadLen nonce.
     ( HasCallStack
     , KnownNat payloadLen
     , KnownNat (16 + payloadLen)
@@ -229,7 +230,7 @@ decryptPacketData ::
     , 32 <= 32 + payloadLen
     ) =>
     SizedByteString (16 + payloadLen) ->
-    SizedByteString PacketNonceBytes ->
+    Nonce nonce ->
     SizedByteString HashBytes ->
     IO (SizedByteString payloadLen)
 decryptPacketData encryptedBS nonceBS keyBS = do
@@ -247,7 +248,7 @@ decryptPacketData encryptedBS nonceBS keyBS = do
             copyBytes (bufPtr `plusPtr` 32) (castPtr ctPtr) len
 
         -- call xsalsa20_xor to generate the subkey and decrypt
-        SizedBS.useAsCString nonceBS \noncePtr -> do
+        SizedBS.useAsCString (fullNonce nonceBS) \noncePtr -> do
             SizedBS.useAsCString keyBS \keyPtr -> do
                 salsaRes <-
                     cs_xsalsa20_xor

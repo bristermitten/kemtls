@@ -12,6 +12,7 @@ import Crypto.Random
 import Data.Vector.Fixed qualified as Fixed
 import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, computePieceSyndrome, encryptPacketData, mctinyHash, seedToE)
 import Network.Socket
+import Nonce (NonceRandomPart (NonceRandomPart))
 import Nonce qualified
 import Packet
 import Protocol qualified
@@ -190,7 +191,7 @@ processQuery1 = do
 
             -- verify last 2 bytes of nonce are what we'd expect
             expect
-                (SizedBS.drop @22 (q1Nonce _packet) == Nonce.phase1C2SNonce rowPos colPos)
+                (Nonce.nonceSuffix (q1Nonce _packet) == Nonce.phase1C2SNonce rowPos colPos)
                 ("Invalid nonce in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
 
             -- compute c_i,j
@@ -211,7 +212,7 @@ processQuery1 = do
                     Reply1
                         { r1Cookie0 = q1Cookie0 _packet
                         , r1Cookie1 = cookie1
-                        , r1Nonce = nonceM `SizedBS.appendSized` Nonce.phase1S2CNonce rowPos colPos
+                        , r1Nonce = nonceM `Nonce.withSuffix` Nonce.phase1S2CNonce rowPos colPos
                         }
             liftIO $ sendPacket client ss reply
             putStrLn $ "Processed Block (" <> show rowPos <> "," <> show colPos <> ")"
@@ -234,7 +235,7 @@ processQuery2 = do
         (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
 
         let piecePos =
-                case Nonce.decodePhase2C2SNonce (SizedBS.drop @22 (query2Nonce packet)) of
+                case Nonce.decodePhase2C2SNonce (Nonce.nonceSuffix (query2Nonce packet)) of
                     Just pos -> pos
                     Nothing -> error "Invalid nonce in Query2"
 
@@ -280,7 +281,7 @@ processQuery2 = do
                 Reply2
                     { r2Cookie0 = query2Cookie0 packet
                     , r2Syndrome2 = finalSyndrome
-                    , r2Nonce = nonceM || Nonce.phase2S2CNonce piecePos
+                    , r2Nonce = nonceM `Nonce.withSuffix` Nonce.phase2S2CNonce piecePos
                     }
 
     setClientState (Phase3 ss)
@@ -304,7 +305,7 @@ processQuery3 = do
     _Z <- liftIO $ mctinyHash (one 1 <> toStrictBS e <> toStrictBS (query3MergedPieces packet) <> toStrictBS _C)
 
     s_mHash <- liftIO $ mctinyHash (toStrictBS s_m)
-    let mNonce = nonceM || Nonce.phase3S2CNonce
+    let mNonce = nonceM `Nonce.withSuffix` Nonce.phase3S2CNonce
     _C_Z <-
         liftIO $
             encryptPacketData _Z mNonce s_mHash
@@ -321,12 +322,12 @@ processQuery3 = do
 handleC0AndMAndSM ::
     (HasCallStack) =>
     SizedByteString CookieC0Bytes ->
-    SizedByteString PacketNonceBytes ->
+    Nonce.Nonce "N" ->
     ConnectionM
         ( SharedSecret
         , SizedByteString SessionKeyBytes
         , SizedByteString HashBytes
-        , SizedByteString NonceRandomPartBytes
+        , Nonce.NonceRandomPart "M"
         , SizedByteString CookieSeedBytes
         )
 handleC0AndMAndSM c0 nonce = do
@@ -339,7 +340,7 @@ handleC0AndMAndSM c0 nonce = do
             randomSized @NonceRandomPartBytes
     s <- liftIO $ mctinyHash (toStrictBS (s_m || ss))
 
-    pure (ss, s_m, s, mNonce, e)
+    pure (ss, s_m, s, NonceRandomPart mNonce, e)
 
 getGlobalState :: ConnectionM ServerState
 getGlobalState = do

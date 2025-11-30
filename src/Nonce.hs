@@ -1,7 +1,45 @@
 module Nonce where
 
+import Constants (NonceRandomPartBytes, PacketNonceBytes)
+import Data.Binary (Get, Put)
+import Data.Binary.Put (putByteString)
 import Data.ByteString (pack, unpack)
-import SizedByteString (SizedByteString (..), SizedString (unsafeMkSized), toStrictBS)
+import GHC.TypeLits
+import SizedByteString (SizedByteString (..), SizedString (unsafeMkSized), appendSized, toStrictBS)
+import SizedByteString qualified as SizedBS
+
+newtype NonceRandomPart (tag :: Symbol) = NonceRandomPart
+    { getNonceRandomPart :: SizedByteString NonceRandomPartBytes
+    }
+    deriving stock (Eq, Show)
+
+data Nonce (tag :: Symbol) = Nonce
+    { randomPart :: NonceRandomPart tag
+    , nonceSuffix :: SizedByteString 2
+    }
+    deriving stock (Eq, Show)
+
+fullNonce :: Nonce tag -> SizedByteString PacketNonceBytes
+fullNonce (Nonce r s) = getNonceRandomPart r `appendSized` s
+
+withSuffix :: NonceRandomPart tag -> SizedByteString 2 -> Nonce tag
+withSuffix = Nonce
+
+withNewSuffix :: Nonce tag -> SizedByteString 2 -> Nonce tag
+withNewSuffix (Nonce r _) = Nonce r
+
+parseNonce :: SizedByteString PacketNonceBytes -> Nonce tag
+parseNonce bs =
+    let (r, s) = SizedBS.splitAt @NonceRandomPartBytes bs
+     in Nonce (NonceRandomPart r) s
+
+putNonce :: Nonce tag -> Put
+putNonce nonce = putByteString (SizedBS.toStrictBS (fullNonce nonce))
+
+getNonce :: Get (Nonce tag)
+getNonce = do
+    bs <- SizedBS.getSizedByteString @PacketNonceBytes
+    pure (parseNonce bs)
 
 {- | Nonce suffix for Client-to-Server messages in Phase 0
 0, 0

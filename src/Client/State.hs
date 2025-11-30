@@ -3,6 +3,8 @@ module Client.State where
 import Constants
 import Data.Map.Strict qualified as Map
 import McTiny (Ciphertext, McElieceKeypair)
+import Nonce (NonceRandomPart)
+import Packet (NonceN)
 import SizedByteString
 
 data ClientState
@@ -13,14 +15,14 @@ data ClientState
     | -- | We have received Reply0 from the server and are now in phase1 receiving Reply1s
       Phase1
         { cookie0 :: SizedByteString CookieC0Bytes
-        , longTermNonce :: SizedByteString NonceRandomPartBytes
+        , longTermNonce :: NonceRandomPart "N"
         -- ^ N from Reply0
         , receivedBlocks :: ReceivedBlocks
         -- ^ List of C_i,j
         }
     | Phase2
         { cookie0 :: SizedByteString CookieC0Bytes
-        , longTermNonce :: SizedByteString NonceRandomPartBytes -- N
+        , longTermNonce :: NonceRandomPart "N"
         , receivedBlocks :: ReceivedBlocks
         , syndromes :: [SizedByteString McTinyPieceBytes]
         }

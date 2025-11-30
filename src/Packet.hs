@@ -15,6 +15,7 @@ import Data.Vector.Fixed (fromList')
 import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decap, decryptPacketData, encryptPacketData)
+import Nonce
 import Server.State (ServerState (..))
 import SizedByteString as SizedBS
 import Utils
@@ -109,17 +110,19 @@ newtype Handshake
 
 data Query0
     = Query0
-    { query0NonceR :: SizedByteString PacketNonceBytes -- R from the paper
+    { query0NonceR :: NonceR -- R from the paper
     , query0ServerPKHash :: SizedByteString HashBytes -- sha3 hash of server's static public key
     , query0CipherText :: SizedByteString 226 -- encapsulation of server's static key
     , query0Extensions :: [SizedByteString 0] -- currently unused, should be empty
     }
     deriving stock (Show)
 
+type NonceR = Nonce "R"
+
 data Query1
     = Query1
     { q1Block :: SizedByteString McTinyBlockBytes -- 1kb chunk of the public key
-    , q1Nonce :: SizedByteString PacketNonceBytes -- N
+    , q1Nonce :: NonceN -- N
     , q1Cookie0 :: SizedByteString CookieC0Bytes
     }
     deriving stock (Show)
@@ -149,13 +152,11 @@ instance McTinyPacket Query0 where
         guard (null exts) -- no extensions supported
         -- 512 0 bytes for extensions gets sent encrypted
         encrypted <- liftIO $ encryptPacketData (SizedBS.replicate @PacketExtensionsBytes 0) nonce ss
-        putStrLn "Packet encrypted"
-        putStrLn $ "Packet Info: " ++ show (SizedBS.sizedLength nonce, SizedBS.sizedLength pkHash, SizedBS.sizedLength ct, SizedBS.sizedLength encrypted)
         pure $ runPut $ do
             putSizedByteString encrypted
             putSizedByteString pkHash
             putSizedByteString ct
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket serverState input = do
         let (mac, encrypted, pkHash, ct, nonce) =
@@ -164,11 +165,11 @@ instance McTinyPacket Query0 where
                     encrypted <- getSizedByteString @PacketExtensionsBytes
                     pkHash <- getSizedByteString @HashBytes
                     ct <- getSizedByteString @CiphertextBytes
-                    nonce <- getSizedByteString @PacketNonceBytes
+                    nonce <- getNonce
                     pure (mac, encrypted, pkHash, ct, nonce)
 
         -- make sure last 2 bytes of nonce are zero
-        guard (SizedBS.index @22 nonce == 0 && SizedBS.index @23 nonce == 0)
+        guard (nonceSuffix nonce == phase0C2SNonce)
 
         ss <- liftIO $ decap (serverSecretKey serverState) ct
         decryptedExtensions <- liftIO $ decryptPacketData (mac `SizedBS.appendSized` encrypted) nonce ss
@@ -195,14 +196,14 @@ instance McTinyPacket Query1 where
         pure $ runPut $ do
             putSizedByteString encrypted
             putSizedByteString cookie
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedBlock, cookie, nonce) =
                 flip runGet input $ do
                     encryptedBlock <- getSizedByteString @(McTinyBlockBytes + 16)
                     cookie <- getSizedByteString @CookieC0Bytes
-                    nonce <- getSizedByteString @PacketNonceBytes
+                    nonce <- getNonce
                     pure (encryptedBlock, cookie, nonce)
         decryptedBlock <- liftIO $ decryptPacketData encryptedBlock nonce ss
         pure $
@@ -214,9 +215,13 @@ instance McTinyPacket Query1 where
 
 data Reply0 = Reply0
     { r0Cookie0 :: SizedByteString CookieC0Bytes
-    , r0Nonce :: SizedByteString PacketNonceBytes
+    -- ^ cookie C_0
+    , r0Nonce :: NonceN
+    -- ^ packet nonce M, 1, 0
     }
     deriving stock (Show)
+
+type NonceN = Nonce "N"
 
 instance McTinyPacket Reply0 where
     type PacketSize Reply0 = Reply0Bytes
@@ -225,22 +230,21 @@ instance McTinyPacket Reply0 where
     type PacketGetResult Reply0 = Reply0
     putPacket ss (Reply0 cookie nonce) = do
         encrypted <- liftIO $ encryptPacketData cookie nonce ss
-        putStrLn "Reply0 packet encrypted"
-        putStrLn $ "Reply0 Packet Info: " ++ show (SizedBS.sizedLength encrypted, SizedBS.sizedLength nonce)
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedCookie, nonce) =
                 runGet
                     ( do
                         encryptedCookie <- getSizedByteString @(CookieC0Bytes + 16)
-                        nonce <- getSizedByteString @PacketNonceBytes
+                        nonce <- getNonce
                         pure (encryptedCookie, nonce)
                     )
                     input
         decryptedCookie <- liftIO $ decryptPacketData encryptedCookie nonce ss
+
         pure $
             Reply0
                 { r0Cookie0 = decryptedCookie
@@ -250,9 +254,11 @@ instance McTinyPacket Reply0 where
 data Reply1 = Reply1
     { r1Cookie0 :: SizedByteString CookieC0Bytes
     , r1Cookie1 :: SizedByteString Cookie1BlockBytes
-    , r1Nonce :: SizedByteString PacketNonceBytes
+    , r1Nonce :: NonceM
     }
     deriving stock (Show)
+
+type NonceM = Nonce "M"
 
 instance McTinyPacket Reply1 where
     type PacketSize Reply1 = Reply1Bytes
@@ -265,14 +271,14 @@ instance McTinyPacket Reply1 where
         encrypted <- liftIO $ encryptPacketData payload nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedPayload, nonce) =
                 runGet
                     ( do
                         encryptedPayload <- getSizedByteString @(EncryptedSize (CookieC0Bytes + Cookie1BlockBytes))
-                        nonce <- getSizedByteString @PacketNonceBytes
+                        nonce <- getNonce
                         pure (encryptedPayload, nonce)
                     )
                     input
@@ -288,7 +294,7 @@ instance McTinyPacket Reply1 where
 data Query2 = Query2
     { query2Cookies :: Vec ExpectedQuery2CookieLength (SizedByteString Cookie1BlockBytes) -- list of all C_i,j in the range
     , query2Cookie0 :: SizedByteString CookieC0Bytes
-    , query2Nonce :: SizedByteString PacketNonceBytes
+    , query2Nonce :: NonceN
     }
     deriving stock (Show)
 
@@ -309,11 +315,11 @@ instance McTinyPacket Query2 where
         let concatenatedCookies =
                 mkSizedOrError @(ExpectedQuery2CookieLength * Cookie1BlockBytes) $
                     mconcat (fmap fromSized (toList cookies))
-        let payload = concatenatedCookies `appendSized` cookie0
-        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        encrypted <- liftIO $ encryptPacketData concatenatedCookies nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putSizedByteString cookie0
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedPayload, cookie0, nonce) =
@@ -324,7 +330,7 @@ instance McTinyPacket Query2 where
                                 (ExpectedQuery2CookieLength * Cookie1BlockBytes)
                              )
                     cookie0 <- getSizedByteString @CookieC0Bytes
-                    nonce <- getSizedByteString @PacketNonceBytes
+                    nonce <- getNonce
                     pure (encryptedPayload, cookie0, nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
 
@@ -341,7 +347,7 @@ instance McTinyPacket Query2 where
 data Reply2 = Reply2
     { r2Cookie0 :: SizedByteString CookieC0Bytes
     , r2Syndrome2 :: SizedByteString McTinyPieceBytes
-    , r2Nonce :: SizedByteString PacketNonceBytes
+    , r2Nonce :: NonceM
     }
     deriving stock (Show)
 
@@ -356,7 +362,7 @@ instance McTinyPacket Reply2 where
         encrypted <- liftIO $ encryptPacketData payload nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedPayload, nonce) =
@@ -366,7 +372,7 @@ instance McTinyPacket Reply2 where
                             @( EncryptedSize
                                 (CookieC0Bytes + McTinyPieceBytes)
                              )
-                    nonce <- getSizedByteString @PacketNonceBytes
+                    nonce <- getNonce
                     pure (encryptedPayload, nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
         let (cookie0, cjs) = SizedBS.splitAt @CookieC0Bytes decryptedPayload
@@ -380,7 +386,7 @@ instance McTinyPacket Reply2 where
 
 data Query3 = Query3
     { query3MergedPieces :: SizedByteString McTinyColBytes
-    , query3Nonce :: SizedByteString PacketNonceBytes
+    , query3Nonce :: NonceN
     , query3Cookie0 :: SizedByteString CookieC0Bytes
     }
     deriving stock (Show)
@@ -392,18 +398,18 @@ instance McTinyPacket Query3 where
     type PacketGetResult Query3 = Query3
 
     putPacket ss (Query3 mergedPieces nonce cookie0) = do
-        let payload = mergedPieces `appendSized` cookie0
-        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        encrypted <- liftIO $ encryptPacketData mergedPieces nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putSizedByteString cookie0
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedPayload, cookie0, nonce) =
                 flip runGet input $ do
                     encryptedPayload <- getSizedByteString @(EncryptedSize McTinyColBytes)
                     cookie0 <- getSizedByteString @CookieC0Bytes
-                    nonce <- getSizedByteString @PacketNonceBytes
+                    nonce <- getNonce
                     pure (encryptedPayload, cookie0, nonce)
         mergedPieces <- liftIO $ decryptPacketData encryptedPayload nonce ss
         pure $
@@ -420,7 +426,7 @@ data Reply3 = Reply3
     -- ^ merged pieces c_1, ..., c_r
     , reply3C :: SizedByteString HashBytes
     -- ^ hash value C
-    , reply3Nonce :: SizedByteString PacketNonceBytes
+    , reply3Nonce :: NonceM
     -- ^ packet nonce M, 255, 255
     }
     deriving stock (Show)
@@ -436,14 +442,14 @@ instance McTinyPacket Reply3 where
         encrypted <- liftIO $ encryptPacketData payload nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putSizedByteString nonce
+            putNonce nonce
 
     getPacket ss input = do
         let (encryptedPayload, nonce) =
                 flip runGet input $ do
                     encryptedPayload <- getSizedByteString @(EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes))
                     nonce <- getSizedByteString @PacketNonceBytes
-                    pure (encryptedPayload, nonce)
+                    pure (encryptedPayload, parseNonce nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
         let (c_z, rest) = SizedBS.splitAt @Cookie9Bytes decryptedPayload
         let (mergedPieces, c) = SizedBS.splitAt @McTinyColBytes rest

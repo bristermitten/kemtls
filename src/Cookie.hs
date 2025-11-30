@@ -20,12 +20,14 @@ createCookie0 ::
     -- | key id (0-7)
     Word8 ->
     -- | encoded cookie data
-    IO (SizedByteString CookieC0Bytes, SizedByteString PacketNonceBytes)
+    IO (SizedByteString CookieC0Bytes, Nonce.Nonce "N")
 createCookie0 kCookie kMaster seed keyId = do
     encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
     nonce <-
-        randomSized @NonceRandomPartBytes
-            <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
+        Nonce.parseNonce
+            <$> ( pure (SizedBS.replicate 0xAA)
+                    <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
+                )
     let payload = kMaster `appendSized` seed -- S, E
     putStrLn $ "DEBUG: createCookie0 payload = " <> show payload
     encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
@@ -42,21 +44,22 @@ decodeCookie0 ::
     -- | encoded cookie data
     SizedByteString CookieC0Bytes ->
     -- | packet nonce
-    SizedByteString PacketNonceBytes ->
+    Nonce.Nonce "N" ->
     -- | decoded shared secret (S) and seed (E)
     IO (SharedSecret, SizedByteString CookieSeedBytes)
 decodeCookie0 kCookie cookieC0 packetNonce = do
     -- we have C0 ← (AE(S,E : N,1,0 : hash(sm)),m mod 8)
     let (encData, _keyIdBS) = SizedBS.splitAt @(CookieC0Bytes - 1) cookieC0
-    let baseNonce = SizedBS.take @22 packetNonce
-        cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase0S2CNonce
+    let
+        cookieNonce = packetNonce `Nonce.withNewSuffix` Nonce.phase0S2CNonce
 
     encKey <- mctinyHash (toStrictBS kCookie) -- hash(s_m)
     decrypted <- decryptPacketData encData cookieNonce encKey -- DAE(...)
-    putStrLn $ "DEBUG: decodeCookie0 decrypted = " <> show decrypted
     let (sharedSecretBS, seedBS) = SizedBS.splitAt @SharedSecretBytes decrypted
     when (seedBS /= SizedBS.replicate @CookieSeedBytes 0xAA) $
-        error "Cookie decode error: invalid seed"
+        error $
+            "Cookie decode error: invalid seed: " <> show seedBS
+
     return (sharedSecretBS, seedBS)
 
 {- | Create a phase 1 cookie
@@ -66,18 +69,18 @@ createCookie1 ::
     SizedByteString CookieSecretKeyBytes -> -- server cookie key (s_m)
     SharedSecret -> -- s
     SizedByteString McTinySyndromeBytes -> -- syndrome ci,j
-    SizedByteString PacketNonceBytes -> -- N
+    Nonce.Nonce "N" -> -- N
     Int -> -- i (row)
     Int -> -- j (column)
     Word8 -> -- key id (m)
-    IO (SizedByteString Cookie1BlockBytes, SizedByteString PacketNonceBytes)
+    IO (SizedByteString Cookie1BlockBytes, Nonce.Nonce "N")
 createCookie1 kCookie kMaster syndrome packetNonce row col keyId = do
     encKey <- mctinyHash $ toStrictBS (kCookie || kMaster)
 
-    let baseNonce = SizedBS.take @22 packetNonce
+    let
         cookieNonce =
-            baseNonce
-                `SizedBS.appendSized` Nonce.phase1S2CNonce row col
+            packetNonce
+                `Nonce.withNewSuffix` Nonce.phase1S2CNonce row col
 
     encrypted <- encryptPacketData syndrome cookieNonce encKey
 
@@ -91,17 +94,15 @@ decodeCookie1 ::
     -- | encoded cookie data
     SizedByteString Cookie1BlockBytes ->
     -- | packet nonce
-    SizedByteString PacketNonceBytes ->
+    Nonce.Nonce "N" ->
     Int -> -- i (row)
     Int -> -- j (column)
 
     -- | decoded syndrome ci,j and nonce M
-    IO (SizedByteString McTinySyndromeBytes, SizedByteString PacketNonceBytes)
+    IO (SizedByteString McTinySyndromeBytes, Nonce.Nonce "N")
 decodeCookie1 kCookie kMaster cookie1 packetNonce i j = do
     let (encData, _keyIdBS) = SizedBS.splitAt @(Cookie1BlockBytes - 1) cookie1
-    let baseNonce = SizedBS.take @22 packetNonce
-    let cookieNonce = baseNonce `SizedBS.appendSized` Nonce.phase1S2CNonce i j
-
+    let cookieNonce = packetNonce `Nonce.withNewSuffix` Nonce.phase1S2CNonce i j
     encKey <- mctinyHash $ toStrictBS (kCookie || kMaster)
 
     decrypted <- decryptPacketData encData cookieNonce encKey
