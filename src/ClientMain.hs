@@ -2,7 +2,7 @@ module ClientMain where
 
 import Client
 import Client.State
-import Constants (CookieC0Bytes, CookieSeedBytes, NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks, mctinyV)
+import Constants (CookieC0Bytes, CookieSeedBytes, NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks, mctinyV, McTinyPieceBytes)
 import Control.Monad (foldM)
 import Cookie (decodeCookie0)
 import Data.ByteString qualified as BS
@@ -141,7 +141,9 @@ runPhase2 cookie0 = do
             forM [i * mctinyV - mctinyV + 1 .. i * mctinyV] $ \rowPos -> do
                 forM [1 .. mcTinyColBlocks] $ \colPos -> do
                     case lookupBlock rowPos colPos allCookies of
-                        Just block -> pure block
+                        Just block -> do 
+                            putStrLn ("Query2: Using block (" <> show rowPos <> ", " <> show colPos <> ") for piece " <> show i)
+                            pure block
                         Nothing -> error $ "Missing block (" <> show rowPos <> ", " <> show colPos <> ")"
         nonce <- gets longTermNonce
         let grid = Fixed.fromList' (map Fixed.fromList' cookies)
@@ -154,6 +156,26 @@ runPhase2 cookie0 = do
         sendPacket packet
 
         reply <- readPacket @Reply2
+
+        let startRow = (i - 1) * mctinyV + 1
+        let endRow   = i * mctinyV
+        liftIO $ putStrLn $ "--- Verifying Piece " ++ show i ++ " (Rows " ++ show startRow ++ "-" ++ show endRow ++ ") ---"
+        
+        let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
+        -- 1. Re-calculate locally
+        kp <- asks localKeypair
+        
+        -- IMPORTANT: Use the CORRECTED logic which mimics server aggregation
+        expectedSynd2 <- liftIO $ calculatePieceLocally debugSeed i (publicKey kp)
+
+        if r2Syndrome2 reply == expectedSynd2
+            then liftIO $ putStrLn $ "MATCH: Piece " ++ show i ++ " is correct."
+            else do
+                liftIO $ putStrLn $ "MISMATCH at Piece " ++ show i
+                liftIO $ putStrLn $ "  Expected: " ++ show expectedSynd2
+                liftIO $ putStrLn $ "  Received: " ++ show (r2Syndrome2 reply)
+                -- Optional: Crash here to stop
+                error "Stopping due to syndrome mismatch."
 
         modify
             ( \case
@@ -188,3 +210,43 @@ runPhase3 = do
     _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z
+
+
+calculatePieceLocally :: SizedByteString CookieSeedBytes -> Int -> McEliecePublicKey -> IO (SizedByteString McTinyPieceBytes)
+calculatePieceLocally seed pieceIdx pk = do
+    -- 1. Init Accumulator
+    -- pieceIdx is 1-based. Wrapper 'computePieceSyndrome' expects 1-based (it subtracts 1).
+    -- So we pass 'pieceIdx' directly.
+    acc <- createPiece seed pieceIdx
+
+    -- 2. Calculate Row Range
+    let startRow = (pieceIdx - 1) * mctinyV + 1
+
+    -- 3. Iterate Relative Rows 0..6
+    foldM
+        ( \currentAcc relRow -> do
+            -- Calculate Absolute Row (1-based)
+            let absRow = startRow + relRow
+
+            -- Iterate Cols 0..7 (Relative) -> 1..8 (Absolute)
+            foldM
+                ( \innerAcc relCol -> do
+                    let absCol = relCol + 1
+
+                    -- Get Block (1-based)
+                    blk <- publicKeyToMcTinyBlock pk absRow absCol
+                    
+                    -- Compute synd1 (1-based Col)
+                    -- Wrapper 'computePartialSyndrome' expects 1-based Col (it subtracts 1).
+                    s1 <- computePartialSyndrome seed blk absCol
+                    putStrLn $ "Computed Partial Syndrome for Block (" <> show absRow <> "," <> show absCol <> "): " <> show s1
+
+                    -- Absorb into Row 'relRow' (0-based)
+                    putStrLn $ "  Absorbing Block (" <> show absRow <> "," <> show absCol <> ") into Piece " <> show pieceIdx <> ", Row " <> show relRow
+                    absorbSyndromeIntoPiece innerAcc s1 (relRow + 1)
+                )
+                currentAcc
+                [0 .. 7]
+        )
+        acc
+        [0 .. 6]

@@ -2,7 +2,7 @@ UNAME_S := $(shell uname -s)
 
 # Default flags: Standard C, Position Independent Code, Include local dirs
 # We add -Imath/common and -Imath/mceliece for PQClean
-CFLAGS_NEW = -O3 -Wall -fPIC -I. -Imath/common -Imath/mceliece
+CFLAGS_NEW = -O3 -fsanitize=address -Wall -fPIC -I. -Imath/common -Imath/mceliece
 
 ifeq ($(UNAME_S),Darwin)
     # macOS (M1/Intel)

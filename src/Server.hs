@@ -37,46 +37,46 @@ kemtlsServer mhost port serverSecretKey = do
             )
 
     vacuous $ E.bracket (open addr) close (loop stateVar)
-    where
-        resolve = do
-            let hints =
-                    defaultHints
-                        { addrFlags = [AI_PASSIVE]
-                        , addrSocketType = Stream
-                        , addrProtocol = 6 -- TCP
-                        }
-            head <$> getAddrInfo (Just hints) mhost (Just port)
-        open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
-            setSocketOption sock ReuseAddr 1
-            withFdSocket sock setCloseOnExecIfNeeded
-            bind sock $ addrAddress addr
-            listen sock 1024
-            putStrLn $ "Listening on port " <> port <> " on host " <> show addr
-            return sock
+  where
+    resolve = do
+        let hints =
+                defaultHints
+                    { addrFlags = [AI_PASSIVE]
+                    , addrSocketType = Stream
+                    , addrProtocol = 6 -- TCP
+                    }
+        head <$> getAddrInfo (Just hints) mhost (Just port)
+    open addr = E.bracketOnError (openSocket addr) close $ \sock -> do
+        setSocketOption sock ReuseAddr 1
+        withFdSocket sock setCloseOnExecIfNeeded
+        bind sock $ addrAddress addr
+        listen sock 1024
+        putStrLn $ "Listening on port " <> port <> " on host " <> show addr
+        return sock
 
-        loop stateVar sock = infinitely $
-            E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
-                putStrLn $ "Connection from " <> show peer
+    loop stateVar sock = infinitely $
+        E.bracketOnError (accept sock) (close . fst) $ \(conn, peer) -> do
+            putStrLn $ "Connection from " <> show peer
 
-                serverState <- readMVar stateVar
-                let cid = length (connectedClients serverState) + 1
+            serverState <- readMVar stateVar
+            let cid = length (connectedClients serverState) + 1
 
-                -- Create the initial Local State for this client
-                let clientLocalState = newClient cid conn
+            -- Create the initial Local State for this client
+            let clientLocalState = newClient cid conn
 
-                forkFinally
-                    (runStateT (runReaderT handleConnection stateVar) clientLocalState)
-                    ( \result -> do
-                        case result of
-                            Left ex ->
-                                putStrLn $
-                                    "Thread crashed:\n"
-                                        <> displayException ex
-                                        <> "\n"
-                                        <> E.displayExceptionContext (E.someExceptionContext ex)
-                            Right _ -> putStrLn "Thread finished normally"
-                        cleanupClient stateVar cid conn
-                    )
+            forkFinally
+                (runStateT (runReaderT handleConnection stateVar) clientLocalState)
+                ( \result -> do
+                    case result of
+                        Left ex ->
+                            putStrLn $
+                                "Thread crashed:\n"
+                                    <> displayException ex
+                                    <> "\n"
+                                    <> E.displayExceptionContext (E.someExceptionContext ex)
+                        Right _ -> putStrLn "Thread finished normally"
+                    cleanupClient stateVar cid conn
+                )
 
 newClient :: Int -> Socket -> ClientInfo
 newClient cid sock =
@@ -95,11 +95,11 @@ registerClient = do
     liftIO $ modifyMVar_ stateVar $ \st -> do
         let newClients = client : connectedClients st
         putStrLn $ "Client registered. Clients connected: " <> show (length newClients)
-        return $ st {connectedClients = newClients}
+        return $ st{connectedClients = newClients}
 
 setClientState :: (MonadTrans t, MonadState ClientInfo m) => ClientState -> t m ()
 setClientState newState = do
-    lift $ modify $ \c -> c {clientState = newState}
+    lift $ modify $ \c -> c{clientState = newState}
 
 cleanupClient :: MVar ServerState -> Int -> Socket -> IO ()
 cleanupClient stateVar cid sock = do
@@ -107,7 +107,7 @@ cleanupClient stateVar cid sock = do
     modifyMVar_ stateVar $ \st -> do
         let remainingClients = filter (\c -> clientId c /= cid) (connectedClients st)
         putStrLn $ "Client disconnected. Clients connected: " <> show (length remainingClients)
-        return $ st {connectedClients = remainingClients}
+        return $ st{connectedClients = remainingClients}
 
 handleConnection :: ConnectionM ()
 handleConnection = do
@@ -128,15 +128,15 @@ handshakeLoop = do
             putStrLn "Waiting for Query0..."
             processQuery0
             handshakeLoop
-        SentReply0 {} -> do
+        SentReply0{} -> do
             putStrLn "Waiting for Query1..."
             processQuery1
             handshakeLoop
-        SentReply1 {} -> do
+        SentReply1{} -> do
             putStrLn "Waiting for Query2..."
             processQuery2
             handshakeLoop
-        Phase3 {} -> do
+        Phase3{} -> do
             putStrLn "Waiting for Query3..."
             processQuery3
         -- dont loop, handshake complete
@@ -256,7 +256,16 @@ processQuery2 = do
                 putStrLn $ "Decoding cookie for block (" <> show (j - 1, l - 1) <> ")"
                 let encodedCookie = (query2Cookies packet Fixed.! (j - 1)) Fixed.! (l - 1)
                 -- decode cookie1 to get syndrome c_{j,l} and nonce N
-                (syndrome, nonce) <- liftIO $ decodeCookie1 (cookieSecretKey globalState) ss encodedCookie (query2Nonce packet) j l
+                let absJ = (i - 1) * mctinyV + j -- work out absolute row
+                (syndrome, nonce) <-
+                    liftIO $
+                        decodeCookie1
+                            (cookieSecretKey globalState)
+                            ss
+                            encodedCookie
+                            (query2Nonce packet)
+                            absJ
+                            l
                 putStrLn $ "Decoded cookie for block (" <> show (j, l) <> "): " <> show syndrome
                 -- absorb syndrome into piece
                 piece <- liftIO $ readMVar pieceVar

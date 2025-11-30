@@ -406,7 +406,9 @@ absorbSyndromeIntoPiece ::
     Int -> -- piece index (1-based)
     IO (SizedByteString McTinyPieceBytes) -- returns updated syndrome2
 absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
-    guard ((pieceIndex - 1) >= 0 && (pieceIndex - 1) < mctinyV)
+    unless (pieceIndex > 0 && pieceIndex <= mctinyV) $
+        error $
+            "Invalid piece index: " <> show pieceIndex
     SizedBS.create $ \newSyndrome2Ptr ->
         -- create new syndrome2 result string
         SizedBS.useAsCString synd2BS \synd2Ptr -> do
@@ -415,11 +417,9 @@ absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
             SizedBS.useAsCString synd1BS \synd1Ptr -> do
                 -- read synd1 input
                 c_mctiny_pieceabsorb
-                    newSyndrome2Ptr
-                    (castPtr synd1Ptr)
-                    (fromIntegral (pieceIndex - 1))
-
--- make sure that syndrome2 actually changed
+                    newSyndrome2Ptr -- output synd2 
+                    (castPtr synd1Ptr) -- input synd1
+                    (fromIntegral (pieceIndex - 1)) -- piece index (0-based)
 
 mergePieceSyndromes ::
     (HasCallStack) =>

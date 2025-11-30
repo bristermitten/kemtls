@@ -29,7 +29,6 @@ createCookie0 kCookie kMaster seed keyId = do
                     <&> \r -> r `SizedBS.appendSized` Nonce.phase0S2CNonce
                 )
     let payload = kMaster `appendSized` seed -- S, E
-    putStrLn $ "DEBUG: createCookie0 payload = " <> show payload
     encrypted <- encryptPacketData payload nonce encKey -- AE(S,E : N,1,0, hash(s_m))
     return
         ( encrypted `snocSized` keyId -- b
@@ -97,7 +96,6 @@ decodeCookie1 ::
     Nonce.Nonce "N" ->
     Int -> -- i (row)
     Int -> -- j (column)
-
     -- | decoded syndrome ci,j and nonce M
     IO (SizedByteString McTinySyndromeBytes, Nonce.Nonce "N")
 decodeCookie1 kCookie kMaster cookie1 packetNonce i j = do
