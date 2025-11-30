@@ -70,7 +70,6 @@ createCookie1 ::
     IO (SizedByteString Cookie1BlockBytes, Nonce.Nonce "N")
 createCookie1 kCookie kMaster syndrome packetNonce row col keyId = do
     encKey <- mctinyHash $ toStrictBS (kCookie || kMaster)
-
     let
         cookieNonce =
             packetNonce
