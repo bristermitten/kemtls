@@ -3,8 +3,6 @@
 module Test where
 
 import Hedgehog
-import Hedgehog.Gen qualified as Gen
-import Hedgehog.Range qualified as Range
 import McTiny
 
 main :: IO Bool
