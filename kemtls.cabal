@@ -67,43 +67,49 @@ common shared
     , time
     , with-utf8
 
-  hs-source-dirs:     src
   default-language:   GHC2021
   extra-libraries:    mctiny
 
 library
   import:          shared
+  hs-source-dirs:  src
   exposed-modules:
+    Client
+    Client.State
+    Constants
+    Cookie
     McTiny
     Nonce
     Packet
     Paths
+    Protocol
+    Server
+    Server.State
     SizedByteString
     Utils
 
 executable server
-  import:        shared
-  main-is:       ServerMain.hs
-  ghc-options:   -main-is ServerMain
-  build-depends: kemtls
+  import:         shared
+  main-is:        ServerMain.hs
+  ghc-options:    -main-is ServerMain
+  build-depends:  kemtls
+  hs-source-dirs: app
   other-modules:
-    Server
-    Server.State
 
 executable client
-  import:        shared
-  main-is:       ClientMain.hs
-  build-depends: kemtls
-  ghc-options:   -main-is ClientMain
+  import:         shared
+  main-is:        ClientMain.hs
+  build-depends:  kemtls
+  hs-source-dirs: app
+  ghc-options:    -main-is ClientMain
   other-modules:
-    Client
-    Client.State
 
 executable initialise
-  import:        shared
-  main-is:       InitialiseMain.hs
-  build-depends: kemtls
-  ghc-options:   -main-is InitialiseMain
+  import:         shared
+  main-is:        InitialiseMain.hs
+  hs-source-dirs: app
+  build-depends:  kemtls
+  ghc-options:    -main-is InitialiseMain
 
 test-suite test
   import:         shared
