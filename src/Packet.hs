@@ -1,4 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
 
@@ -451,17 +452,19 @@ instance McTinyPacket Reply3 where
     type PacketGetContext Reply3 = SharedSecret
     type PacketGetResult Reply3 = Reply3
 
-    putPacket ss (Reply3 c_z c mergedPieces nonce) = do
-        let payload = c_z || mergedPieces || c
-        encrypted <- liftIO $ encryptPacketData payload nonce ss
+    putPacket ss (Reply3 {..}) = do
+        let payload = reply3C_z || reply3MergedPieces || reply3C
+        encrypted <- liftIO $ encryptPacketData payload reply3Nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
-            putNonce nonce
+            putNonce reply3Nonce
 
     getPacket ss input = do
         let (encryptedPayload, nonce) =
                 flip runGet input $ do
-                    encryptedPayload <- getSizedByteString @(EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes))
+                    encryptedPayload <-
+                        getSizedByteString
+                            @(EncryptedSize (Cookie9Bytes + McTinyColBytes + HashBytes))
                     nonce <- getSizedByteString @PacketNonceBytes
                     pure (encryptedPayload, parseNonce nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
