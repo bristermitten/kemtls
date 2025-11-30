@@ -2,6 +2,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoStarIsType #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 module Packet where
 
@@ -12,7 +13,6 @@ import Data.Binary.Put
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
-import Data.Vector.Fixed (fromList')
 import Data.Vector.Fixed qualified as Fixed
 import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))
