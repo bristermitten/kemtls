@@ -10,7 +10,7 @@ import Control.Monad.Except (MonadError, throwError)
 import Cookie
 import Crypto.Random
 import Data.Vector.Fixed qualified as Fixed
-import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, computePieceSyndrome, encryptPacketData, mctinyHash, seedToE)
+import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, createPiece, encryptPacketData, mctinyHash, seedToE)
 import Network.Socket
 import Nonce (NonceRandomPart (NonceRandomPart))
 import Nonce qualified
@@ -174,6 +174,7 @@ processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
+    let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
     let ss = case clientState client of
             SentReply0 secret -> secret
             _ -> error "Invalid client state in processQuery1"
@@ -197,6 +198,11 @@ processQuery1 = do
             -- compute c_i,j
             syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
 
+            debugSynd <- liftIO $ computePartialSyndrome debugSeed (q1Block _packet) colPos
+
+            liftIO $ putStrLn $ "(Row " ++ show rowPos ++ ", Col " ++ show colPos ++ "): " ++ show debugSynd
+            expect (syndrome == debugSynd) ("Syndrome mismatch in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
+
             (cookie1, nonceN) <-
                 liftIO $
                     createCookie1
@@ -215,7 +221,6 @@ processQuery1 = do
                         , r1Nonce = nonceM `Nonce.withSuffix` Nonce.phase1S2CNonce rowPos colPos
                         }
             liftIO $ sendPacket client ss reply
-            putStrLn $ "Processed Block (" <> show rowPos <> "," <> show colPos <> ")"
     putStrLn "Completed processing Query1."
     setClientState (SentReply1 ss)
 
@@ -229,7 +234,7 @@ processQuery2 = do
 
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         packet <- lift $ Protocol.recvPacket @Query2 conn ss
-        putStrLn $ "Received Query2 packet: " <> show packet
+        putStrLn $ "Received Query2 packet: " <> show (i)
 
         globalState <- lift getGlobalState
         (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
@@ -241,46 +246,29 @@ processQuery2 = do
 
         expect (piecePos == i) ("Invalid piece position in Query2, expected " <> show i <> " but got " <> show piecePos)
 
-        syndrome <- liftIO $ computePieceSyndrome e piecePos
-        putStrLn $ "e: " <> show e
-        putStrLn $ "Computed initial syndrome for piece " <> show piecePos <> ": " <> show syndrome
-
-        -- 2. Aggregate all 56 cookies into the accumulator
-        -- We use 'foldM' to pass the updating 'currentSynd' through the loop.
-        finalSyndrome <-
-            liftIO $
-                foldM
-                    ( \currentSynd (index, cookie1) -> do
-                        -- Calculate coordinates
-                        -- index is 0..55
-                        let rowInPiece = index `div` 8 -- 0..6
-                        let colInRow = index `mod` 8 -- 0..7
-
-                        -- Calculate Absolute Row/Col for Nonce reconstruction
-                        -- (Assuming piecePos is 0-based 0..16)
-                        -- Note: Adjust +1 if your decodeCookie1 expects 1-based indices
-                        let absRow = ((piecePos - 1) * mctinyV) + rowInPiece + 1
-                        let absCol = colInRow + 1
-
-                        (synd1, _) <-
-                            decodeCookie1
-                                (cookieSecretKey globalState)
-                                ss
-                                cookie1
-                                (query2Nonce packet)
-                                absRow
-                                absCol
-
-                        absorbSyndromeIntoPiece currentSynd synd1 rowInPiece
-                    )
-                    syndrome
-                    (zip [0 ..] (Fixed.toList $ query2Cookies packet))
+        -- createPiece calculates e_j,0 for all j, so we can do this outside the loop
+        initialPiece <- liftIO $ createPiece e piecePos
+        pieceVar <- liftIO $ newMVar initialPiece
+        for_ [1 .. mctinyV] $ \j -> do
+            --  j = iv−v+1,...,iv but normalised
+            for_ [1 .. mcTinyColBlocks] $ \l -> do
+                -- lookup cookie (j, l)
+                putStrLn $ "Decoding cookie for block (" <> show (j - 1, l - 1) <> ")"
+                let encodedCookie = (query2Cookies packet Fixed.! (j - 1)) Fixed.! (l - 1)
+                -- decode cookie1 to get syndrome c_{j,l} and nonce N
+                (syndrome, nonce) <- liftIO $ decodeCookie1 (cookieSecretKey globalState) ss encodedCookie (query2Nonce packet) j l
+                putStrLn $ "Decoded cookie for block (" <> show (j, l) <> "): " <> show syndrome
+                -- absorb syndrome into piece
+                piece <- liftIO $ readMVar pieceVar
+                newPiece <- liftIO $ absorbSyndromeIntoPiece piece syndrome j
+                liftIO $ swapMVar pieceVar newPiece
+        finalPiece <- liftIO $ readMVar pieceVar
 
         liftIO $
             sendPacket client ss $
                 Reply2
                     { r2Cookie0 = query2Cookie0 packet
-                    , r2Syndrome2 = finalSyndrome
+                    , r2Syndrome2 = finalPiece
                     , r2Nonce = nonceM `Nonce.withSuffix` Nonce.phase2S2CNonce piecePos
                     }
 

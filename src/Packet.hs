@@ -12,6 +12,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Data.Vector.Fixed (fromList')
+import Data.Vector.Fixed qualified as Fixed
 import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decap, decryptPacketData, encryptPacketData)
@@ -292,11 +293,16 @@ instance McTinyPacket Reply1 where
                 }
 
 data Query2 = Query2
-    { query2Cookies :: Vec ExpectedQuery2CookieLength (SizedByteString Cookie1BlockBytes) -- list of all C_i,j in the range
+    { query2Cookies :: Query2CookieGrid
     , query2Cookie0 :: SizedByteString CookieC0Bytes
     , query2Nonce :: NonceN
     }
     deriving stock (Show)
+
+-- 2D grid of cookies C_i,j
+-- contains mctinyV (7) rows and mcTinyColBlocks (8) columns
+type Query2CookieGrid =
+    Vec McTinyV (Vec McTinyColBlocks (SizedByteString Cookie1BlockBytes))
 
 -- query2Cookies should have this length i think
 -- at least it does when testing but i'm not sure how consistent it is
@@ -312,9 +318,11 @@ instance McTinyPacket Query2 where
     type PacketGetResult Query2 = Query2
 
     putPacket ss (Query2 cookies cookie0 nonce) = do
+        let flattenedCookies = concatMap Fixed.toList (Fixed.toList cookies)
+
         let concatenatedCookies =
                 mkSizedOrError @(ExpectedQuery2CookieLength * Cookie1BlockBytes) $
-                    mconcat (fmap fromSized (toList cookies))
+                    mconcat (fmap fromSized flattenedCookies)
         encrypted <- liftIO $ encryptPacketData concatenatedCookies nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
@@ -334,15 +342,21 @@ instance McTinyPacket Query2 where
                     pure (encryptedPayload, cookie0, nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
 
-        let cookies = SizedBS.splitInto @ExpectedQuery2CookieLength decryptedPayload
-
-        let cookiesVec = fromList' cookies
+        let flatCookies = SizedBS.splitInto @ExpectedQuery2CookieLength decryptedPayload
+        let rowsList = chunksOf (natToNum @McTinyColBlocks) flatCookies
+        let grid = Fixed.fromList' (map Fixed.fromList' rowsList) :: Query2CookieGrid
         pure $
             Query2
-                { query2Cookies = cookiesVec
+                { query2Cookies = grid
                 , query2Cookie0 = cookie0
                 , query2Nonce = nonce
                 }
+        where
+            chunksOf :: Int -> [a] -> [[a]]
+            chunksOf _ [] = []
+            chunksOf n xs =
+                let (h, t) = Prelude.splitAt n xs
+                 in h : chunksOf n t
 
 data Reply2 = Reply2
     { r2Cookie0 :: SizedByteString CookieC0Bytes

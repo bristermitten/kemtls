@@ -92,7 +92,8 @@ runPhase1 = do
 
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
-            block <- liftIO $ pk2Block pk rowPos colPos
+            block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
+            putStrLn $ "Requesting Block (" <> show rowPos <> "," <> show colPos <> ")"
 
             let packetNonce =
                     nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
@@ -114,6 +115,9 @@ runPhase1 = do
                     "Client Error: Invalid Reply Nonce for Block "
                         <> show (rowPos, colPos)
 
+            let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
+            expectedSynd1 <- liftIO $ computePartialSyndrome debugSeed block colPos
+
             modify
                 ( \case
                     p1@Phase1 {} ->
@@ -131,8 +135,6 @@ runPhase2 :: SizedByteString CookieC0Bytes -> ClientM ()
 runPhase2 cookie0 = do
     putStrLn "Running Phase 2..."
     state <- get
-    print state.cookie0
-    let debugSeed = SizedBS.replicate @CookieSeedBytes 0xAA
     allCookies <- gets receivedBlocks
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         cookies <-
@@ -141,54 +143,18 @@ runPhase2 cookie0 = do
                     case lookupBlock rowPos colPos allCookies of
                         Just block -> pure block
                         Nothing -> error $ "Missing block (" <> show rowPos <> ", " <> show colPos <> ")"
-        let flatCookies = mconcat cookies
-        print (length flatCookies, length cookies)
         nonce <- gets longTermNonce
+        let grid = Fixed.fromList' (map Fixed.fromList' cookies)
         let packet =
                 Query2
-                    { query2Cookies = Fixed.fromList' flatCookies
+                    { query2Cookies = grid
                     , query2Cookie0 = cookie0
                     , query2Nonce = nonce `Nonce.withSuffix` Nonce.phase2C2SNonce i
                     }
         sendPacket packet
 
         reply <- readPacket @Reply2
-        let receivedSynd2 = r2Syndrome2 reply
-        when (i == 1) $ do
-            let startRow = 1
-            let endRow = 7 -- Piece 0 is rows 1..7
 
-            -- Calculate synd1s locally
-            synd1s <- forM [startRow .. endRow] $ \row ->
-                forM [1 .. 8] $ \col -> do
-                    pk <- publicKey <$> asks localKeypair
-                    blk <- liftIO $ pk2Block pk row col
-                    liftIO $ computePartialSyndrome debugSeed blk col
-
-            -- Aggregate locally
-            initial <- liftIO $ computePieceSyndrome debugSeed i
-
-            putStrLn "DEBUG: Calculating expected syndrome2 locally..."
-            putStrLn $ "DEBUG: debugSeed = " <> show debugSeed
-            putStrLn $ "DEBUG: initial = " <> show initial <> " for piece " <> show i
-
-            expectedSynd2 <-
-                liftIO $
-                    foldM
-                        ( \acc (idx, s1) -> do
-                            let rowInPiece = idx `div` 8
-                            absorbSyndromeIntoPiece acc s1 rowInPiece
-                        )
-                        initial
-                        (zip [0 ..] (concat synd1s))
-
-            liftIO $ putStrLn "DEBUG Check:"
-            liftIO $ putStrLn $ "  Server Sent: " ++ show receivedSynd2
-            liftIO $ putStrLn $ "  Client Calc: " ++ show expectedSynd2
-
-            if receivedSynd2 /= expectedSynd2
-                then error "MATH MISMATCH! Server calculated wrong syndrome."
-                else liftIO $ putStrLn "DEBUG: Math Match! Server is correct."
         modify
             ( \case
                 ph2@(Phase2 {}) ->
@@ -213,7 +179,6 @@ runPhase3 = do
                 , query3Nonce = nonce
                 , query3Cookie0 = cookie0
                 }
-    print (fromSized merged)
     sendPacket packet
     putStrLn "Sent Query3 packet."
 

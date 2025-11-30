@@ -337,13 +337,13 @@ publicKeyBytes (McEliecePublicKey fptr) = BS.create pkBytes $ \ptr ->
     withForeignPtr fptr $ \pkPtr ->
         copyBytes ptr pkPtr pkBytes
 
-pk2Block ::
+publicKeyToMcTinyBlock ::
     McEliecePublicKey ->
     Int -> -- rowPos
     Int -> -- colPos
     IO (SizedByteString McTinyBlockBytes)
-pk2Block (McEliecePublicKey pkFPtr) rowPos colPos = do
-    SizedBS.create $ \outPtr ->
+publicKeyToMcTinyBlock (McEliecePublicKey pkFPtr) rowPos colPos = do
+    SizedBS.create $ \outPtr -> do
         withForeignPtr pkFPtr $ \pkPtr -> do
             c_mctiny_pk2block outPtr pkPtr (fromIntegral rowPos) (fromIntegral colPos)
 
@@ -387,11 +387,11 @@ computePartialSyndrome seedBS blockBS colPos = do
     eBS <- seedToE seedBS
     eBlockToSyndrome eBS blockBS (colPos - 1)
 
-computePieceSyndrome ::
+createPiece ::
     SizedByteString CookieSeedBytes ->
-    Int -> -- piece index p
+    Int -> -- piece index p (1-based)
     IO (SizedByteString McTinyPieceBytes)
-computePieceSyndrome seedBS piecePos = do
+createPiece seedBS piecePos = do
     eBS <- seedToE seedBS
     SizedBS.create $ \sPtr ->
         SizedBS.useAsCString eBS \ePtr -> do
@@ -403,9 +403,10 @@ computePieceSyndrome seedBS piecePos = do
 absorbSyndromeIntoPiece ::
     SizedByteString McTinyPieceBytes ->
     SizedByteString McTinySyndromeBytes ->
-    Int -> -- piece index i
+    Int -> -- piece index (1-based)
     IO (SizedByteString McTinyPieceBytes) -- returns updated syndrome2
 absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
+    guard ((pieceIndex - 1) >= 0 && (pieceIndex - 1) < mctinyV)
     SizedBS.create $ \newSyndrome2Ptr ->
         -- create new syndrome2 result string
         SizedBS.useAsCString synd2BS \synd2Ptr -> do
@@ -416,7 +417,9 @@ absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
                 c_mctiny_pieceabsorb
                     newSyndrome2Ptr
                     (castPtr synd1Ptr)
-                    (fromIntegral pieceIndex)
+                    (fromIntegral (pieceIndex - 1))
+
+-- make sure that syndrome2 actually changed
 
 mergePieceSyndromes ::
     (HasCallStack) =>
