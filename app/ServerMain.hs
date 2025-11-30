@@ -1,6 +1,5 @@
 module ServerMain where
 
-import Main.Utf8 qualified as Utf8
 import McTiny
 import Paths (pathToServerSecretKey)
 import Server (kemtlsServer)
