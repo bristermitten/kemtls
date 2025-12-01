@@ -2,7 +2,8 @@
     "files.associations": {
         "flake.lock": "json",
         "mctiny.h": "c",
-        "tweetnacl.h": "c"
+        "tweetnacl.h": "c",
+        "api.h": "c"
     },
     "cSpell.words": [
         "Ciphertext",

@@ -317,20 +317,22 @@ processQuery3 = do
     print ("Computed _C and _Z:", _C, _Z)
     s_mHash <- liftIO $ mctinyHash (toStrictBS s_m)
     let mNonce = nonceM `Nonce.withSuffix` Nonce.phase3S2CNonce
+
+    (ciphertext, z) <- liftIO $ finalizeMcTiny (query3MergedPieces packet) e
+
     _C_Z <-
         liftIO $
-            encryptPacketData _Z mNonce s_mHash
+            encryptPacketData z mNonce s_mHash
                 <&> (`snocSized` 0) -- m = 0
     sendPacket client shts $
         Reply3
             { reply3C_z = _C_Z
-            , reply3C = _C
-            , reply3MergedPieces = query3MergedPieces packet
+            , reply3Ciphertext = ciphertext
             , reply3Nonce = mNonce
             }
     putStrLn $ "Received Query3 packet: " <> show packet
 
-    lift $ setClientState (Completed ss_s _Z)
+    lift $ setClientState (Completed ss_s z)
 
 handleServerFinished :: ExceptT Text ConnectionM ()
 handleServerFinished = do

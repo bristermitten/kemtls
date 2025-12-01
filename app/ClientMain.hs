@@ -202,7 +202,7 @@ runPhase3 = do
         "Client Error: Invalid Reply3 nonce suffix."
 
     sk <- (.secretKey) <$> asks localKeypair
-    _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
+    _Z <- liftIO $ decap sk (reply.reply3Ciphertext)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z
 
@@ -244,5 +244,3 @@ runFinishedPhase = do
     putStrLn $ "Expected HMAC: " <> show hmac
     unless (hmac == expectedHMAC) $
         error "Client Error: ServerFinished HMAC does not match expected value!"
-
--- "\193\SI`\147\193hU\210F\167\151fz\a\161\132\136\187\DC2?\149F\231j\226\220\162c\220\207\229\169"

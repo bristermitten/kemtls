@@ -251,9 +251,7 @@ instance KEMTLSPacket Query3 where
 data Reply3 = Reply3
     { reply3C_z :: SizedByteString Cookie9Bytes
     -- ^ cookie C_z
-    , reply3MergedPieces :: SizedByteString McTinyColBytes
-    -- ^ merged pieces c_1, ..., c_r
-    , reply3C :: SizedByteString HashBytes
+    , reply3Ciphertext :: SizedByteString McTinyCiphertextBytes
     -- ^ hash value C
     , reply3Nonce :: NonceM
     -- ^ packet nonce M, 255, 255
@@ -269,7 +267,7 @@ instance KEMTLSPacket Reply3 where
     type PacketGetResult Reply3 = Reply3
 
     putPacket ss (Reply3 {..}) = do
-        let payload = reply3C_z || reply3MergedPieces || reply3C
+        let payload = reply3C_z || reply3Ciphertext
         encrypted <- liftIO $ encryptPacketData payload reply3Nonce ss
         pure $ runPut $ do
             putSizedByteString encrypted
@@ -285,11 +283,9 @@ instance KEMTLSPacket Reply3 where
                     pure (encryptedPayload, parseNonce nonce)
         decryptedPayload <- liftIO $ decryptPacketData encryptedPayload nonce ss
         let (c_z, rest) = SizedBS.splitAt @Cookie9Bytes decryptedPayload
-        let (mergedPieces, c) = SizedBS.splitAt @McTinyColBytes rest
         pure $
             Reply3
                 { reply3C_z = c_z
-                , reply3MergedPieces = mergedPieces
-                , reply3C = c
+                , reply3Ciphertext = rest
                 , reply3Nonce = nonce
                 }
