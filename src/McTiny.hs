@@ -68,6 +68,10 @@ foreign import ccall safe "mctiny_pieceabsorb"
 foreign import ccall safe "mctiny_mergepieces"
     c_mctiny_mergepieces :: Ptr Word8 -> Ptr Word8 -> IO ()
 
+-- void mctiny_finalize(unsigned char *c,unsigned char *k,const unsigned char *synd3,const unsigned char *e)
+foreign import ccall safe "mctiny_finalize"
+    c_mctiny_finalize :: Ptr Word8 -> Ptr Word8 -> Ptr Word8 -> Ptr Word8 -> IO ()
+
 -- | Generate a McEliece keypair
 generateKeypair :: IO McElieceKeypair
 generateKeypair = do
@@ -430,3 +434,25 @@ mergePieceSyndromes synd2List = do
                     copyBytes destPtr (castPtr synd2Ptr) mctinyPieceBytes
             -- call the C function
             c_mctiny_mergepieces synd3Ptr synd2ArrayPtr
+
+-- mctiny_finalize(ciphertext,ksession,synd3,e);
+-- unsigned char ciphertext[226]
+-- unsigned char ksession[32]
+-- unsigned char synd3[194]
+-- unsigned char e[870]
+
+finalizeMcTiny ::
+    SizedByteString McTinyColBytes -> -- synd3
+    SizedByteString McTinyErrorVectorBytes -> -- e
+    IO (SizedByteString McTinyCiphertextBytes, SizedByteString SharedSecretBytes) -- (ciphertext, ksession)
+finalizeMcTiny synd3BS eBS = do
+    (ciphertextBS, kSession) <- SizedBS.createWith @McTinyCiphertextBytes $ \ctPtr ->
+        SizedBS.create @SharedSecretBytes $ \kSessionPtr -> do
+            SizedBS.useAsCString synd3BS \synd3Ptr ->
+                SizedBS.useAsCString eBS \ePtr -> do
+                    c_mctiny_finalize
+                        (castPtr ctPtr)
+                        (castPtr kSessionPtr)
+                        (castPtr synd3Ptr)
+                        (castPtr ePtr)
+    return (ciphertextBS, kSession)

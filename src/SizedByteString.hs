@@ -19,11 +19,11 @@ import Data.Binary.Get (Get, getByteString)
 import Data.Binary.Put (Put, putByteString)
 import Data.ByteArray (ByteArrayAccess)
 import Data.ByteString qualified as BS
-import Data.ByteString.Internal qualified as BS (create)
+import Data.ByteString.Internal qualified as BS (create, createUptoN')
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Short qualified as SBS
 import Data.Type.Ord (type (<), type (<=))
-import Foreign (Ptr)
+import Foreign (Ptr, callocBytes, fillBytes)
 import Foreign.C (CString)
 import GHC.TypeLits (Div, Mod, type (+), type (-))
 
@@ -209,8 +209,24 @@ getSizedByteString = do
 create :: forall n. (KnownNat n) => (Ptr Word8 -> IO ()) -> IO (SizedByteString n)
 create action = do
     let size = natToNum @n @Int
-    bs <- BS.create size action
+    let action' ptr = do
+            -- zero out memory
+            fillBytes ptr (fromIntegral size) 0
+            action ptr
+    bs <- BS.create size action'
     pure (unsafeSized bs)
+
+createWith :: forall n r. (KnownNat n) => (Ptr Word8 -> IO r) -> IO (SizedByteString n, r)
+createWith action = do
+    let size = natToNum @n @Int
+    let action' ptr = do
+            -- zero out memory
+            fillBytes ptr (fromIntegral size) 0
+            r <- action ptr
+            pure (size, r)
+    bsAndResult <- BS.createUptoN' size action'
+    let (bs, result) = bsAndResult
+    pure (unsafeSized bs, result)
 
 useAsCString :: forall n a. (KnownNat n) => SizedByteString n -> (CString -> IO a) -> IO a
 useAsCString (SizedByteString sbs) action = do

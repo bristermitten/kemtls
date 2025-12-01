@@ -212,3 +212,10 @@ mctinyPieceBytes = mctiny_PIECEBYTES
 
 type McTinyPieceBytes :: Nat
 type McTinyPieceBytes = mctiny_PIECEBYTES
+
+#define mctiny_CIPHERTEXTBYTES 226
+mctinyCiphertextBytes :: (Num a) => a
+mctinyCiphertextBytes = mctiny_CIPHERTEXTBYTES
+
+type McTinyCiphertextBytes :: Nat
+type McTinyCiphertextBytes = mctiny_CIPHERTEXTBYTES

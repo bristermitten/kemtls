@@ -13,7 +13,7 @@ import Crypto.KDF.HKDF qualified as HKDF
 import Data.Vector.Fixed qualified as Fixed
 import HKDF (expandLabel, expandLabelWithCurrentTranscript)
 import KEMTLS
-import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, mctinyHash, seedToE)
+import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, finalizeMcTiny, mctinyHash, seedToE)
 import Network.Socket
 import Nonce (Nonce (nonceSuffix), NonceRandomPart (NonceRandomPart))
 import Nonce qualified
@@ -200,7 +200,7 @@ processQuery1 = do
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
             _packet <- lift $ Protocol.recvPacket @Query1 conn chts
-            (ss, s_m, s, nonceM, e) <-
+            (ss, s_m, s, nonceM, _E) <-
                 lift $
                     handleC0AndMAndSM
                         (q1Cookie0 _packet)
@@ -214,7 +214,7 @@ processQuery1 = do
                 ("Invalid nonce in Query1 for block (" <> show rowPos <> "," <> show colPos <> ")")
 
             -- compute c_i,j
-            syndrome <- liftIO $ computePartialSyndrome e (q1Block _packet) colPos
+            syndrome <- liftIO $ computePartialSyndrome _E (q1Block _packet) colPos
 
             (cookie1, nonceN) <-
                 liftIO $
@@ -250,7 +250,7 @@ processQuery2 = do
         packet <- lift $ Protocol.recvPacket @Query2 conn chts
 
         globalState <- lift getGlobalState
-        (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
+        (ss, s_m, s, nonceM, _E) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
 
         let piecePos =
                 case Nonce.decodePhase2C2SNonce (Nonce.nonceSuffix (query2Nonce packet)) of
@@ -260,7 +260,7 @@ processQuery2 = do
         expect (piecePos == i) ("Invalid piece position in Query2, expected " <> show i <> " but got " <> show piecePos)
 
         -- createPiece calculates e_j,0 for all j, so we can do this outside the loop
-        initialPiece <- liftIO $ createPiece e piecePos
+        initialPiece <- liftIO $ createPiece _E piecePos
         pieceVar <- liftIO $ newMVar initialPiece
         for_ [1 .. mctinyV] $ \j -> do
             --  j = iv−v+1,...,iv but normalised
@@ -340,7 +340,7 @@ handleServerFinished = do
         _ -> throwError "Invalid client state in handleServerFinished"
 
     (chts, shts) <- lift $ deriveHandshakeSecret ss_s
-    print ("Server Shared Secrets:", ss_s, ss_e)
+    print ("Server Shared Secrets:", ss_s ss_e)
     (fk_c, fk_s) <- lift $ deriveMasterSecret ss_s ss_e
     putStrLn $ "Derived fk_s: " <> show fk_s
     hmac <- lift $ getTranscriptHMAC fk_s
@@ -384,7 +384,7 @@ handleC0AndMAndSM ::
         )
 handleC0AndMAndSM c0 nonce = do
     globalState <- getGlobalState
-    (ss_s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
+    (ss_s, _E) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
     let s_m = cookieSecretKey globalState -- current cookie key, but we don't do rotation so always 0
     -- we would have to recreate C_0 here but since s_m hasn't changed there's nothing to do
     mNonce <-
@@ -392,7 +392,7 @@ handleC0AndMAndSM c0 nonce = do
             randomSized @NonceRandomPartBytes
     s <- liftIO $ mctinyHash (toStrictBS (s_m || ss_s))
 
-    pure (ss_s, s_m, s, NonceRandomPart mNonce, e)
+    pure (ss_s, s_m, s, NonceRandomPart mNonce, _E)
 
 getGlobalState :: ConnectionM ServerState
 getGlobalState = do
