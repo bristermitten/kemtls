@@ -202,7 +202,7 @@ runPhase3 = do
         "Client Error: Invalid Reply3 nonce suffix."
 
     sk <- (.secretKey) <$> asks localKeypair
-    _Z <- liftIO $ decap sk (reply.reply3Ciphertext)
+    _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z
 
@@ -222,14 +222,12 @@ runFinishedPhase = do
 
     ss_s <- gets ss_s
     ss_e <- gets ss_e
-    print ("Client Shared Secrets:", ss_s, ss_e)
 
     (chts, shts) <- deriveHandshakeSecret ss_s
     (fk_c, fk_s) <- deriveMasterSecret ss_s ss_e
     putStrLn $ "Derived fk_s: " <> show fk_s
     hmac <- getTranscriptHMAC fk_s
 
-    print ("Client SHTS:", shts)
     socket <- asks envSocket
     serverFinished <- Protocol.recvTLSRecord @ServerFinished socket shts
 

@@ -151,7 +151,6 @@ get3ByteLength = do
 
 data ServerFinished = ServerFinished
     { sfHMAC :: SizedByteString HashBytes
-    , sfVerification :: SizedByteString 4
     , sfNonce :: Nonce "M"
     }
     deriving stock (Show)
@@ -160,13 +159,13 @@ instance TLSRecord ServerFinished where
     recordID = 0x14
 
 instance KEMTLSPacket ServerFinished where
-    type PacketSize ServerFinished = EncryptedSize (HashBytes + 4) + PacketNonceBytes
+    type PacketSize ServerFinished = EncryptedSize HashBytes + PacketNonceBytes
     type PacketPutContext ServerFinished = SharedSecret
     type PacketGetContext ServerFinished = SharedSecret
     type PacketGetResult ServerFinished = ServerFinished
 
     putPacket ss finished = do
-        let payload = finished.sfHMAC Sized.|| finished.sfVerification
+        let payload = finished.sfHMAC
         encrypted <- liftIO $ encryptPacketData payload (sfNonce finished) ss
         pure $ runPut $ do
             putSizedByteString encrypted
@@ -176,16 +175,14 @@ instance KEMTLSPacket ServerFinished where
         let (encryptedHMAC, nonce) =
                 runGet
                     ( do
-                        encryptedHMAC <- getSizedByteString @(EncryptedSize (HashBytes + 4))
+                        encryptedHMAC <- getSizedByteString @(EncryptedSize HashBytes)
                         nonce <- getNonce
                         pure (encryptedHMAC, nonce)
                     )
                     input
         decryptedData <- liftIO $ decryptPacketData encryptedHMAC nonce ss
-        let (decryptedHMAC, verification) = Sized.splitAt @HashBytes decryptedData
         pure $
             ServerFinished
-                { sfHMAC = decryptedHMAC
-                , sfVerification = verification
+                { sfHMAC = decryptedData
                 , sfNonce = nonce
                 }

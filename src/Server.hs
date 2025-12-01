@@ -314,7 +314,6 @@ processQuery3 = do
     -- Z <- hash(1, e, (c_1, c_2, ..., c_r), C)
     _Z <- liftIO $ mctinyHash (one 1 <> toStrictBS e <> toStrictBS (query3MergedPieces packet) <> toStrictBS _C)
 
-    print ("Computed _C and _Z:", _C, _Z)
     s_mHash <- liftIO $ mctinyHash (toStrictBS s_m)
     let mNonce = nonceM `Nonce.withSuffix` Nonce.phase3S2CNonce
 
@@ -324,10 +323,14 @@ processQuery3 = do
         liftIO $
             encryptPacketData z mNonce s_mHash
                 <&> (`snocSized` 0) -- m = 0
+    assertM
+        (ciphertext == packet.query3MergedPieces || _C)
+        "Client Error: Mismatched ciphertext in Query3."
     sendPacket client shts $
         Reply3
             { reply3C_z = _C_Z
-            , reply3Ciphertext = ciphertext
+            , reply3MergedPieces = query3MergedPieces packet
+            , reply3C = _C
             , reply3Nonce = mNonce
             }
     putStrLn $ "Received Query3 packet: " <> show packet
@@ -366,7 +369,6 @@ handleServerFinished = do
     let expectedFinished =
             ServerFinished
                 { sfHMAC = hmac
-                , sfVerification = mkSizedOrError "HELP"
                 , sfNonce = nonceM
                 }
     print ("Server SHTS:", shts)
