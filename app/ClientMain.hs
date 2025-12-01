@@ -53,13 +53,14 @@ runClientHello = do
                 }
 
     socket <- asks envSocket
-    Protocol.sendTLSRecord socket clientHello
+    Protocol.sendTLSRecord socket () clientHello
 
     dES <- kdf_dES
     putStrLn $ "Derived dES: " <> show dES
     putStrLn "ClientHello sent. Awaiting server response..."
 
-    response <- Protocol.recvTLSRecord @ServerHello socket
+    ss_s <- asks envSharedSecret
+    response <- Protocol.recvTLSRecord @ServerHello socket ss_s
     putStrLn $ "Received ServerHello: " <> show response
 
     let cookie = shCookieC0 response

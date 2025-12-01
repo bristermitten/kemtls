@@ -1,5 +1,8 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
 module Protocol.TLS where
 
+import Assertions (assertM)
 import Constants (kemTLSMcTinyVersion)
 import Data.Binary qualified
 import Data.Binary.Get
@@ -8,6 +11,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import Network.Socket
 import Network.Socket.ByteString
+import Packet.Generic
 import Packet.TLS
 import Protocol (recvExact)
 import Transcript (TranscriptT)
@@ -20,33 +24,37 @@ recvTLSRecord ::
     , TLSRecord a
     , HasCallStack
     , MonadPlus m
+    , KnownNat (PacketSize a)
+    , KEMTLSPacket a
     ) =>
-    Socket -> TranscriptT m a
-recvTLSRecord sock = do
+    Socket ->
+    PacketGetContext a ->
+    TranscriptT m (PacketGetResult a)
+recvTLSRecord sock context = do
     let recordType = 0x16 -- Handshake
 
     -- Read record header
     recType <- liftIO $ recv sock 1
-    putStrLn $ "Received record type: " <> show recType
     ver <- liftIO $ recvExact sock 2
-    putStrLn $ "Received version bytes: " <> show ver
     lenBytes <- liftIO $ recvExact sock 2
-    putStrLn $ "Received length bytes: " <> show lenBytes
+    let expectedSize = fromIntegral $ natVal (Proxy @(PacketSize a))
 
-    guard (recType == BS.pack [recordType])
-    guard (runGet getWord16be ver == kemTLSMcTinyVersion)
-
+    assertM
+        (expectedSize + 5 == fromIntegral (runGet getWord16be lenBytes))
+        ("Expected packet size " <> show expectedSize <> " does not match length in TLS record header " <> show (runGet getWord16be lenBytes))
+    assertM (recType == BS.pack [recordType]) ("TLS record type mismatch: expected " <> show recordType <> ", got " <> show recType)
+    assertM (runGet getWord16be ver == kemTLSMcTinyVersion) ("TLS version mismatch: expected " <> show kemTLSMcTinyVersion <> ", got " <> show (runGet getWord16be ver))
     let len = fromIntegral (runGet getWord16be lenBytes)
     putStrLn $ "Parsed length: " <> show len
     recordData <- liftIO (recvExact sock len)
     Transcript.recordMessage (fromLazy recordData)
-    pure $ runGet (Data.Binary.get @a) recordData
+    getPacket @a context recordData
 
-sendTLSRecord :: forall a m. (TLSRecord a, MonadIO m) => Socket -> a -> TranscriptT m ()
-sendTLSRecord sock record = do
+sendTLSRecord :: forall a m. (TLSRecord a, MonadIO m, MonadPlus m) => Socket -> PacketPutContext a -> a -> TranscriptT m ()
+sendTLSRecord sock context record = do
     let recordType = 0x16 -- Handshake
     let version = kemTLSMcTinyVersion -- KEMTLS v1.0
-    let body = Data.Binary.encode record
+    body <- putPacket @a context record
     Transcript.recordMessage (fromLazy body)
     let len = fromIntegral (LBS.length body) :: Word16
     let header = runPut $ do

@@ -15,6 +15,7 @@ import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decryptPacketData, encryptPacketData)
 import Nonce
+import Packet.Generic
 import SizedByteString as SizedBS
 import Prelude hiding (ByteString, put, (||))
 
@@ -28,22 +29,7 @@ data Query1
     }
     deriving stock (Show)
 
-class McTinyPacket a where
-    type PacketSize a :: Nat
-
-    type PacketPutContext a
-    -- ^ Context needed to put the packet
-
-    type PacketGetContext a
-    -- ^ Context needed to get the packet
-
-    type PacketGetResult a
-    -- ^ Result type when getting the packet
-
-    putPacket :: (MonadIO m, Alternative m) => PacketPutContext a -> a -> m LBS.ByteString
-    getPacket :: (MonadIO m, Alternative m) => PacketGetContext a -> LBS.ByteString -> m (PacketGetResult a)
-
-instance McTinyPacket Query1 where
+instance KEMTLSPacket Query1 where
     type PacketSize Query1 = Query1Bytes
     type PacketPutContext Query1 = SharedSecret
     type PacketGetContext Query1 = SharedSecret
@@ -69,44 +55,7 @@ instance McTinyPacket Query1 where
                 , q1Nonce = nonce
                 , q1Cookie0 = cookie
                 }
-
-data Reply0 = Reply0
-    { r0Cookie0 :: SizedByteString CookieC0Bytes
-    -- ^ cookie C_0
-    , r0Nonce :: NonceN
-    -- ^ packet nonce M, 1, 0
-    }
-    deriving stock (Show)
-
 type NonceN = Nonce "N"
-
-instance McTinyPacket Reply0 where
-    type PacketSize Reply0 = Reply0Bytes
-    type PacketPutContext Reply0 = SharedSecret
-    type PacketGetContext Reply0 = SharedSecret
-    type PacketGetResult Reply0 = Reply0
-    putPacket ss (Reply0 cookie nonce) = do
-        encrypted <- liftIO $ encryptPacketData cookie nonce ss
-        pure $ runPut $ do
-            putSizedByteString encrypted
-            putNonce nonce
-
-    getPacket ss input = do
-        let (encryptedCookie, nonce) =
-                runGet
-                    ( do
-                        encryptedCookie <- getSizedByteString @(CookieC0Bytes + 16)
-                        nonce <- getNonce
-                        pure (encryptedCookie, nonce)
-                    )
-                    input
-        decryptedCookie <- liftIO $ decryptPacketData encryptedCookie nonce ss
-
-        pure $
-            Reply0
-                { r0Cookie0 = decryptedCookie
-                , r0Nonce = nonce
-                }
 
 data Reply1 = Reply1
     { r1Cookie0 :: SizedByteString CookieC0Bytes
@@ -117,7 +66,7 @@ data Reply1 = Reply1
 
 type NonceM = Nonce "M"
 
-instance McTinyPacket Reply1 where
+instance KEMTLSPacket Reply1 where
     type PacketSize Reply1 = Reply1Bytes
     type PacketPutContext Reply1 = SharedSecret
     type PacketGetContext Reply1 = SharedSecret
@@ -167,7 +116,7 @@ type ExpectedQuery2CookieLength = McTinyColBlocks * McTinyV
 expectedQuery2CookieLength :: Int
 expectedQuery2CookieLength = mcTinyColBlocks * mctinyV
 
-instance McTinyPacket Query2 where
+instance KEMTLSPacket Query2 where
     type PacketSize Query2 = Query2Bytes
     type PacketPutContext Query2 = SharedSecret
     type PacketGetContext Query2 = SharedSecret
@@ -221,7 +170,7 @@ data Reply2 = Reply2
     }
     deriving stock (Show)
 
-instance McTinyPacket Reply2 where
+instance KEMTLSPacket Reply2 where
     type PacketSize Reply2 = Reply2Bytes
     type PacketPutContext Reply2 = SharedSecret
     type PacketGetContext Reply2 = SharedSecret
@@ -261,7 +210,7 @@ data Query3 = Query3
     }
     deriving stock (Show)
 
-instance McTinyPacket Query3 where
+instance KEMTLSPacket Query3 where
     type PacketSize Query3 = Query3Bytes
     type PacketPutContext Query3 = SharedSecret
     type PacketGetContext Query3 = SharedSecret
@@ -301,7 +250,7 @@ data Reply3 = Reply3
     }
     deriving stock (Show)
 
-instance McTinyPacket Reply3 where
+instance KEMTLSPacket Reply3 where
     type PacketSize Reply3 = Reply3Bytes
     type PacketPutContext Reply3 = SharedSecret
     type PacketGetContext Reply3 = SharedSecret

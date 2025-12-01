@@ -75,6 +75,7 @@ library
   import:          shared
   hs-source-dirs:  src
   exposed-modules:
+    Assertions
     Client
     Client.State
     Constants
@@ -85,6 +86,7 @@ library
     McTinyArchive
     Nonce
     Packet
+    Packet.Generic
     Packet.TLS
     Paths
     Protocol

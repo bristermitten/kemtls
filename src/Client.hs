@@ -7,13 +7,14 @@ import Control.Exception qualified as E
 import McTiny
 import Network.Socket
 import Packet
+import Packet.Generic
 import Protocol
 import Transcript (TranscriptT, runTranscriptT)
 
 -- | Read-only environment for the KEMTLS client
 data ClientEnv = ClientEnv
     { envSocket :: Socket
-    , envSharedSecret :: SharedSecret -- the result of ENC(pk),
+    , envSharedSecret :: SharedSecret -- the result of ENC(pk), i.e. S or ss_s
     , envServerPublicKey :: McEliecePublicKey
     , localKeypair :: McElieceKeypair
     -- ^ Client's keypair (k, K)
@@ -46,7 +47,7 @@ runClient mhost port ss serverPK localKP initialState action = do
 
 readPacket ::
     forall a.
-    ( McTinyPacket a
+    ( KEMTLSPacket a
     , KnownNat (PacketSize a)
     , PacketGetContext a ~ SharedSecret
     ) =>
@@ -58,7 +59,7 @@ readPacket = do
     Protocol.recvPacket @a sock secret
 
 sendPacket ::
-    ( McTinyPacket a
+    ( KEMTLSPacket a
     , KnownNat (PacketSize a)
     , PacketPutContext a ~ SharedSecret
     ) =>

@@ -32,6 +32,42 @@ module McTinyArchive where
 
 --     setClientState (SentReply0 ss)
 
+-- data Reply0 = Reply0
+--     { r0Cookie0 :: SizedByteString CookieC0Bytes
+--     -- ^ cookie C_0
+--     , r0Nonce :: NonceN
+--     -- ^ packet nonce M, 1, 0
+--     }
+--     deriving stock (Show)
+
+-- instance KEMTLSPacket Reply0 where
+--     type PacketSize Reply0 = Reply0Bytes
+--     type PacketPutContext Reply0 = SharedSecret
+--     type PacketGetContext Reply0 = SharedSecret
+--     type PacketGetResult Reply0 = Reply0
+--     putPacket ss (Reply0 cookie nonce) = do
+--         encrypted <- liftIO $ encryptPacketData cookie nonce ss
+--         pure $ runPut $ do
+--             putSizedByteString encrypted
+--             putNonce nonce
+
+--     getPacket ss input = do
+--         let (encryptedCookie, nonce) =
+--                 runGet
+--                     ( do
+--                         encryptedCookie <- getSizedByteString @(CookieC0Bytes + 16)
+--                         nonce <- getNonce
+--                         pure (encryptedCookie, nonce)
+--                     )
+--                     input
+--         decryptedCookie <- liftIO $ decryptPacketData encryptedCookie nonce ss
+
+--         pure $
+--             Reply0
+--                 { r0Cookie0 = decryptedCookie
+--                 , r0Nonce = nonce
+--                 }
+
 -- | packet code
 
 -- data Query0

@@ -3,6 +3,7 @@ module Server where
 import Control.Concurrent (forkFinally, modifyMVar_)
 import Control.Exception qualified as E
 
+import Assertions (expect)
 import Constants
 import Control.Exception.Context qualified as E
 import Control.Monad.Except (MonadError, throwError)
@@ -17,6 +18,7 @@ import Network.Socket
 import Nonce (Nonce (nonceSuffix), NonceRandomPart (NonceRandomPart))
 import Nonce qualified
 import Packet
+import Packet.Generic
 import Packet.TLS
 import Protocol qualified
 import Protocol.TLS qualified as Protocol
@@ -152,7 +154,7 @@ processClientHello = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
 
-    clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn
+    clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn ()
     putStrLn $ "Received ClientHello: " <> show clientHello
     expect (nonceSuffix (chNonce clientHello) == Nonce.phase0C2SNonce) ("Invalid nonce in ClientHello: " <> show (chNonce clientHello))
     dES <- lift kdf_dES
@@ -162,13 +164,13 @@ processClientHello = do
 
     putStrLn "Decapsulating shared secret..."
 
-    ss <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
+    ss_s <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
 
     -- generate 32 byte seed
     seed <- liftIO $ randomSized @CookieSeedBytes
     putStrLn $ "Generated Reply0.seed: " <> show seed
 
-    (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss seed 0
+    (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss_s seed 0
 
     let reply =
             ServerHello
@@ -177,10 +179,10 @@ processClientHello = do
                 , shCookieC0 = cookie
                 }
     putStrLn "Sending ServerHello..."
-    lift $ Protocol.sendTLSRecord conn reply
+    lift $ Protocol.sendTLSRecord conn ss_s reply
     putStrLn "Sent ServerHello."
 
-    lift $ setClientState (SentReply0 ss)
+    lift $ setClientState (SentReply0 ss_s)
 
 processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
@@ -350,7 +352,7 @@ getGlobalState = do
     liftIO $ readMVar stateVar
 
 sendPacket ::
-    ( McTinyPacket a
+    ( KEMTLSPacket a
     , KnownNat (PacketSize a)
     , MonadIO m
     , HasCallStack
@@ -359,7 +361,3 @@ sendPacket ::
 sendPacket client context packet = do
     let sock = clientSocket client
     liftIO $ Protocol.sendPacket sock context packet
-
-expect :: (MonadError e f) => Bool -> e -> f ()
-expect True _ = pass
-expect False errMsg = throwError errMsg
