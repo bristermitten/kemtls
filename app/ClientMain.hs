@@ -197,6 +197,10 @@ runPhase3 = do
 
     reply <- readPacketWithContext @Reply3 shts
 
+    assertM
+        (Nonce.nonceSuffix (reply3Nonce reply) == Nonce.phase3S2CNonce)
+        "Client Error: Invalid Reply3 nonce suffix."
+
     sk <- (.secretKey) <$> asks localKeypair
     _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."

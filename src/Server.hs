@@ -340,7 +340,7 @@ handleServerFinished = do
         _ -> throwError "Invalid client state in handleServerFinished"
 
     (chts, shts) <- lift $ deriveHandshakeSecret ss_s
-    print ("Server Shared Secrets:", ss_s ss_e)
+    print ("Server Shared Secrets:", ss_s, ss_e)
     (fk_c, fk_s) <- lift $ deriveMasterSecret ss_s ss_e
     putStrLn $ "Derived fk_s: " <> show fk_s
     hmac <- lift $ getTranscriptHMAC fk_s
