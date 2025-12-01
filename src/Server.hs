@@ -262,7 +262,6 @@ processQuery2 = do
             --  j = iv−v+1,...,iv but normalised
             for_ [1 .. mcTinyColBlocks] $ \l -> do
                 -- lookup cookie (j, l)
-                putStrLn $ "Decoding cookie for block (" <> show (j - 1, l - 1) <> ")"
                 let encodedCookie = (query2Cookies packet Fixed.! (j - 1)) Fixed.! (l - 1)
                 -- decode cookie1 to get syndrome c_{j,l} and nonce N
                 let absJ = (i - 1) * mctinyV + j -- work out absolute row
@@ -275,7 +274,6 @@ processQuery2 = do
                             (query2Nonce packet)
                             absJ
                             l
-                putStrLn $ "Decoded cookie for block (" <> show (j, l) <> "): " <> show syndrome
                 -- absorb syndrome into piece
                 piece <- liftIO $ readMVar pieceVar
                 newPiece <- liftIO $ absorbSyndromeIntoPiece piece syndrome j

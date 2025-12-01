@@ -6,7 +6,6 @@ import Client.State
 import Control.Exception qualified as E
 import McTiny
 import Network.Socket
-import Packet
 import Packet.Generic
 import Protocol
 import Transcript (TranscriptT, runTranscriptT)

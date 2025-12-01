@@ -92,7 +92,6 @@ runPhase1 = do
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
             block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
-            putStrLn $ "Requesting Block (" <> show rowPos <> "," <> show colPos <> ")"
 
             let packetNonce =
                     nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
