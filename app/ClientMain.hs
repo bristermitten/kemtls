@@ -53,7 +53,7 @@ runClientHello = do
                 }
 
     ss_s <- asks envSharedSecret
-    dES <- derive_dES ss_s
+    dES <- deriveEarlySecret ss_s
     putStrLn $ "Derived dES: " <> show dES
     putStrLn "ClientHello sent. Awaiting server response..."
 

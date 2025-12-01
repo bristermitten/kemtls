@@ -164,7 +164,7 @@ processClientHello = do
 
     ss_s <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
 
-    dES <- lift $ derive_dES ss_s
+    dES <- lift $ deriveEarlySecret ss_s
     putStrLn $ "Derived dES: " <> show dES
 
     -- generate 32 byte seed
