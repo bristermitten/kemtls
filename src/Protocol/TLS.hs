@@ -9,6 +9,7 @@ import Data.Binary.Get
 import Data.Binary.Put
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
+import Data.Typeable
 import Network.Socket
 import Network.Socket.ByteString
 import Packet.Generic
@@ -26,6 +27,7 @@ recvTLSRecord ::
     , MonadPlus m
     , KnownNat (PacketSize a)
     , KEMTLSPacket a
+    , Typeable a
     ) =>
     Socket ->
     PacketGetContext a ->
@@ -45,16 +47,24 @@ recvTLSRecord sock context = do
     assertM (recType == BS.pack [recordType]) ("TLS record type mismatch: expected " <> show recordType <> ", got " <> show recType)
     assertM (runGet getWord16be ver == kemTLSMcTinyVersion) ("TLS version mismatch: expected " <> show kemTLSMcTinyVersion <> ", got " <> show (runGet getWord16be ver))
     let len = fromIntegral (runGet getWord16be lenBytes)
-    putStrLn $ "Parsed length: " <> show len
     recordData <- liftIO (recvExact sock len)
+    putStrLn $ "Recording packet of type: " <> show (typeRep (Proxy :: Proxy a))
     Transcript.recordMessage (fromLazy recordData)
     getPacket @a context recordData
 
-sendTLSRecord :: forall a m. (TLSRecord a, MonadIO m, MonadPlus m) => Socket -> PacketPutContext a -> a -> TranscriptT m ()
+sendTLSRecord ::
+    forall a m.
+    ( TLSRecord a
+    , MonadIO m
+    , MonadPlus m
+    , Typeable a
+    ) =>
+    Socket -> PacketPutContext a -> a -> TranscriptT m ()
 sendTLSRecord sock context record = do
     let recordType = 0x16 -- Handshake
     let version = kemTLSMcTinyVersion -- KEMTLS v1.0
     body <- putPacket @a context record
+    putStrLn $ "Recording packet of type: " <> show (typeRep (Proxy :: Proxy a))
     Transcript.recordMessage (fromLazy body)
     let len = fromIntegral (LBS.length body) :: Word16
     let header = runPut $ do

@@ -3,7 +3,7 @@ module Server where
 import Control.Concurrent (forkFinally, modifyMVar_)
 import Control.Exception qualified as E
 
-import Assertions (expect)
+import Assertions (assertM, expect)
 import Constants
 import Control.Exception.Context qualified as E
 import Control.Monad.Except (MonadError, throwError)
@@ -24,7 +24,7 @@ import Protocol qualified
 import Protocol.TLS qualified as Protocol
 import Server.State
 import SizedByteString as SizedBS
-import Transcript (TranscriptT, runTranscriptT)
+import Transcript (TranscriptT, getTranscriptHMAC, runTranscriptT)
 import Prelude hiding ((||))
 
 type ServerEnv = MVar ServerState
@@ -145,9 +145,11 @@ handshakeLoop = do
         Phase3 {} -> do
             putStrLn "Waiting for Query3..."
             processQuery3
-        -- dont loop, handshake complete
-        Completed -> do
-            error "Client already completed handshake, expected no further messages."
+            handshakeLoop
+        Completed {} -> do
+            putStrLn "Waiting for ServerFinished..."
+            handleServerFinished
+            putStrLn "Handshake complete."
 
 processClientHello :: ExceptT Text ConnectionM ()
 processClientHello = do
@@ -298,10 +300,12 @@ processQuery3 = do
     let ss = case clientState client of
             Phase3 secret -> secret
             _ -> error "Invalid client state in processQuery3"
+    (chts, shts) <- lift $ deriveHandshakeSecret ss
 
-    packet <- lift $ Protocol.recvPacket @Query3 conn ss
+    packet <- lift $ Protocol.recvPacket @Query3 conn chts
 
-    (ss, s_m, s, nonceM, _E) <- lift $ handleC0AndMAndSM (query3Cookie0 packet) (query3Nonce packet)
+    (ss_s, s_m, s, nonceM, _E) <- lift $ handleC0AndMAndSM (query3Cookie0 packet) (query3Nonce packet)
+    assertM (ss_s == ss) "Mismatch in shared secret ss_s in Query3"
     e <- liftIO $ seedToE _E
 
     -- C <- hash(2, e)
@@ -315,7 +319,7 @@ processQuery3 = do
         liftIO $
             encryptPacketData _Z mNonce s_mHash
                 <&> (`snocSized` 0) -- m = 0
-    sendPacket client ss $
+    sendPacket client shts $
         Reply3
             { reply3C_z = _C_Z
             , reply3C = _C
@@ -323,6 +327,41 @@ processQuery3 = do
             , reply3Nonce = mNonce
             }
     putStrLn $ "Received Query3 packet: " <> show packet
+
+    lift $ setClientState (Completed ss_s _Z)
+
+handleServerFinished :: ExceptT Text ConnectionM ()
+handleServerFinished = do
+    client <- lift (lift Prelude.get)
+    (ss_s, ss_e) <- case clientState client of
+        Completed ss_s ss_e -> return (ss_s, ss_e)
+        _ -> throwError "Invalid client state in handleServerFinished"
+
+    (chts, shts) <- lift $ deriveHandshakeSecret ss_s
+    print ("Server Shared Secrets:", ss_s, ss_e)
+    (fk_c, fk_s) <- lift $ deriveMasterSecret ss_s ss_e
+    putStrLn $ "Derived fk_s: " <> show fk_s
+    hmac <- lift $ getTranscriptHMAC fk_s
+    putStrLn $ "Expected HMAC: " <> show hmac
+
+    {-
+    Recording message to transcript "\SOH\NUL\NUL\252\ETX\172\134\246\152\158"
+    Recording message to transcript "\STX\NUL\NUL{\ETX\172\207)\134\219"
+
+    -}
+
+    nonceMRandomPart <-
+        liftIO $
+            randomSized @NonceRandomPartBytes
+
+    let nonceM :: Nonce "M" =
+            Nonce.Nonce
+                (NonceRandomPart nonceMRandomPart)
+                Nonce.kemtlsNonceSuffix
+
+    let expectedFinished = ServerFinished {sfHMAC = hmac, sfNonce = nonceM}
+    lift $ Protocol.sendTLSRecord (clientSocket client) shts expectedFinished
+    putStrLn "Sent ServerFinished."
 
 handleC0AndMAndSM ::
     (HasCallStack) =>
@@ -337,15 +376,15 @@ handleC0AndMAndSM ::
         )
 handleC0AndMAndSM c0 nonce = do
     globalState <- getGlobalState
-    (ss, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
+    (ss_s, e) <- liftIO $ decodeCookie0 (cookieSecretKey globalState) c0 nonce
     let s_m = cookieSecretKey globalState -- current cookie key, but we don't do rotation so always 0
     -- we would have to recreate C_0 here but since s_m hasn't changed there's nothing to do
     mNonce <-
         liftIO $
             randomSized @NonceRandomPartBytes
-    s <- liftIO $ mctinyHash (toStrictBS (s_m || ss))
+    s <- liftIO $ mctinyHash (toStrictBS (s_m || ss_s))
 
-    pure (ss, s_m, s, NonceRandomPart mNonce, e)
+    pure (ss_s, s_m, s, NonceRandomPart mNonce, e)
 
 getGlobalState :: ConnectionM ServerState
 getGlobalState = do

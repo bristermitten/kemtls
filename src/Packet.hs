@@ -9,7 +9,6 @@ module Packet where
 import Constants
 import Data.Binary.Get (runGet)
 import Data.Binary.Put
-import Data.ByteString.Lazy qualified as LBS
 import Data.Vector.Fixed qualified as Fixed
 import Data.Vector.Fixed.Boxed (Vec)
 import GHC.TypeLits (type (*), type (+))

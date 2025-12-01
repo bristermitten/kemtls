@@ -14,6 +14,7 @@ import Paths
 import Protocol.TLS qualified as Protocol
 import SizedByteString
 import SizedByteString qualified as SizedBS
+import Transcript (getTranscriptHMAC)
 import Prelude hiding ((||))
 
 main :: IO ()
@@ -89,41 +90,40 @@ runPhase1 = do
     cookie <- gets cookie0
     nonce <- gets longTermNonce
 
-    for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
-        for_ [1 .. mcTinyColBlocks] $ \colPos -> do
-            block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
+    for_ [1 .. mcTinyRowBlocks] $ \rowPos -> for_ [1 .. mcTinyColBlocks] $ \colPos -> do
+        block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
 
-            let packetNonce =
-                    nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
+        let packetNonce =
+                nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
 
-            let queryPacket =
-                    Query1
-                        block
-                        packetNonce
-                        cookie
+        let queryPacket =
+                Query1
+                    block
+                    packetNonce
+                    cookie
 
-            chts <- gets chts
-            sendPacketWithContext chts queryPacket
+        chts <- gets chts
+        sendPacketWithContext chts queryPacket
 
-            shts <- gets shts
-            receivedPacket <- readPacketWithContext @Reply1 shts
+        shts <- gets shts
+        receivedPacket <- readPacketWithContext @Reply1 shts
 
-            let reply1Nonce = r1Nonce receivedPacket
+        let reply1Nonce = r1Nonce receivedPacket
 
-            unless (Nonce.nonceSuffix reply1Nonce == Nonce.phase1S2CNonce rowPos colPos) $
-                error $
-                    "Client Error: Invalid Reply Nonce for Block "
-                        <> show (rowPos, colPos)
+        unless (Nonce.nonceSuffix reply1Nonce == Nonce.phase1S2CNonce rowPos colPos) $
+            error $
+                "Client Error: Invalid Reply Nonce for Block "
+                    <> show (rowPos, colPos)
 
-            modify
-                ( \case
-                    p1@Phase1 {} ->
-                        p1
-                            { receivedBlocks =
-                                addBlock rowPos colPos (r1Cookie1 receivedPacket) (receivedBlocks p1)
-                            }
-                    _ -> error "Invalid client state when storing Reply1 blocks."
-                )
+        modify
+            ( \case
+                p1@Phase1 {} ->
+                    p1
+                        { receivedBlocks =
+                            addBlock rowPos colPos (r1Cookie1 receivedPacket) (receivedBlocks p1)
+                        }
+                _ -> error "Invalid client state when storing Reply1 blocks."
+            )
     blocks <- gets receivedBlocks
     chts <- gets chts
     shts <- gets shts
@@ -138,11 +138,10 @@ runPhase2 cookie0 = do
     shts <- gets shts
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         cookies <-
-            forM [i * mctinyV - mctinyV + 1 .. i * mctinyV] $ \rowPos -> do
-                forM [1 .. mcTinyColBlocks] $ \colPos -> do
-                    case lookupBlock rowPos colPos allCookies of
-                        Just block -> pure block
-                        Nothing -> error $ "Missing block (" <> show rowPos <> ", " <> show colPos <> ")"
+            forM [i * mctinyV - mctinyV + 1 .. i * mctinyV] $ \rowPos -> forM [1 .. mcTinyColBlocks] $ \colPos -> do
+                case lookupBlock rowPos colPos allCookies of
+                    Just block -> pure block
+                    Nothing -> error $ "Missing block (" <> show rowPos <> ", " <> show colPos <> ")"
         nonce <- gets longTermNonce
         let grid = Fixed.fromList' (map Fixed.fromList' cookies)
         let packet =
@@ -172,6 +171,8 @@ runPhase3 = do
     syndromesList <- gets syndromes
     merged <- liftIO $ mergePieceSyndromes syndromesList
 
+    chts <- gets chts
+    shts <- gets shts
     nonce <- gets longTermNonce <&> (`Nonce.withSuffix` Nonce.phase3C2SNonce)
     cookie0 <- gets cookie0
     let packet =
@@ -180,12 +181,52 @@ runPhase3 = do
                 , query3Nonce = nonce
                 , query3Cookie0 = cookie0
                 }
-    sendPacket packet
+
+    sendPacketWithContext chts packet
     putStrLn "Sent Query3 packet."
 
-    reply <- readPacket @Reply3
+    reply <- readPacketWithContext @Reply3 shts
 
     sk <- (.secretKey) <$> asks localKeypair
     _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z
+
+    nonce <- gets longTermNonce
+    ss_s <- asks envSharedSecret
+    put
+        ( Finalising
+            nonce
+            ss_s
+            _Z
+        )
+    runFinishedPhase
+
+runFinishedPhase :: ClientM ()
+runFinishedPhase = do
+    putStrLn "Running Finished Phase..."
+
+    ss_s <- gets ss_s
+    ss_e <- gets ss_e
+    print ("Client Shared Secrets:", ss_s, ss_e)
+
+    (chts, shts) <- deriveHandshakeSecret ss_s
+    (fk_c, fk_s) <- deriveMasterSecret ss_s ss_e
+    putStrLn $ "Derived fk_s: " <> show fk_s
+    hmac <- getTranscriptHMAC fk_s
+
+    serverFinished <- readPacketWithContext @ServerFinished shts
+
+    putStrLn $ "Received ServerFinished: " <> show serverFinished
+
+    let expectedHMAC = sfHMAC serverFinished
+    putStrLn $ "Received HMAC: " <> show expectedHMAC
+    putStrLn $ "Expected HMAC: " <> show hmac
+    unless (hmac == expectedHMAC) $
+        error "Client Error: ServerFinished HMAC does not match expected value!"
+
+{-
+("Client Shared Secrets:","Z\224/\224Tx6Q\231\205O\181YE\162\194L\182\f\241\156&'\GSu1\206ke\220\136\DC2","\SYNE]eE\DC2q\191X\251o\167J3\215&\177\&2$\171\vG\223o\164*\153\186f\139l\188")
+
+("Server Shared Secrets:","Z\224/\224Tx6Q\231\205O\181YE\162\194L\182\f\241\156&'\GSu1\206ke\220\136\DC2","BZS\r\EM\187\214@\151-\ACK\161\&9\226|_\254Z\n\tFnT4\192\\\199\139\224\128\t\241")
+-}

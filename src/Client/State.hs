@@ -34,6 +34,11 @@ data ClientState
         , shts :: SharedSecret
         -- ^ Derived SHTS from ss_s
         }
+    | Finalising
+        { longTermNonce :: NonceRandomPart "N"
+        , ss_s :: SharedSecret
+        , ss_e :: SharedSecret
+        }
     deriving stock (Show)
 
 newtype ReceivedBlocks = ReceivedBlocks

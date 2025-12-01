@@ -50,6 +50,7 @@ common shared
     , aeson
     , async
     , base               >=4   && <5
+    , base16-bytestring
     , binary
     , bytestring
     , crypton

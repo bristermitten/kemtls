@@ -4,7 +4,7 @@
 module Packet.TLS where
 
 import Assertions (assertM)
-import Constants (CiphertextBytes, CookieC0Bytes, EncryptedSize, PacketNonceBytes)
+import Constants (CiphertextBytes, CookieC0Bytes, EncryptedSize, HashBytes, PacketNonceBytes)
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
@@ -141,5 +141,39 @@ get3ByteLength = do
                 Word32
     pure len
 
-data ClientFinished = ClientFinished
-    {}
+data ServerFinished = ServerFinished
+    { sfHMAC :: SizedByteString HashBytes
+    , sfNonce :: Nonce "M"
+    }
+    deriving stock (Show)
+
+instance TLSRecord ServerFinished where
+    recordID = 0x14
+
+instance KEMTLSPacket ServerFinished where
+    type PacketSize ServerFinished = EncryptedSize HashBytes + PacketNonceBytes
+    type PacketPutContext ServerFinished = SharedSecret
+    type PacketGetContext ServerFinished = SharedSecret
+    type PacketGetResult ServerFinished = ServerFinished
+
+    putPacket ss finished = do
+        encrypted <- liftIO $ encryptPacketData (sfHMAC finished) (sfNonce finished) ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putNonce (sfNonce finished)
+
+    getPacket ss input = do
+        let (encryptedHMAC, nonce) =
+                runGet
+                    ( do
+                        encryptedHMAC <- getSizedByteString @(HashBytes + 16)
+                        nonce <- getNonce
+                        pure (encryptedHMAC, nonce)
+                    )
+                    input
+        decryptedHMAC <- liftIO $ decryptPacketData encryptedHMAC nonce ss
+        pure $
+            ServerFinished
+                { sfHMAC = decryptedHMAC
+                , sfNonce = nonce
+                }

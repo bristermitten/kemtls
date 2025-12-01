@@ -17,6 +17,7 @@ import Crypto.Random (MonadRandom, getRandomBytes)
 import Data.Binary (Binary)
 import Data.Binary.Get (Get, getByteString)
 import Data.Binary.Put (Put, putByteString)
+import Data.ByteArray (ByteArrayAccess)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BS (create)
 import Data.ByteString.Lazy qualified as LBS

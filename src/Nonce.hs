@@ -106,3 +106,10 @@ phase3C2SNonce = unsafeMkSized (fromList [254, 255])
 
 phase3S2CNonce :: SizedByteString 2
 phase3S2CNonce = unsafeMkSized (fromList [255, 255])
+
+{- | Nonce suffix for all KEMTLS messages
+since these packets will also have an outer TLS identifier
+we can bundle them all together
+-}
+kemtlsNonceSuffix :: SizedByteString 2
+kemtlsNonceSuffix = unsafeMkSized (fromList [255, 254])

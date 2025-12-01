@@ -18,7 +18,7 @@ deriveEarlySecret ss_s = do
                 (BS.pack (replicate 32 0))
                 (Sized.toStrictBS ss_s)
     -- dES <- HKDF.Expand(ES, "derived", ∅)
-    pure $ expandLabel @ByteString _ES "derived" ""
+    pure $ expandLabel _ES "derived" ""
 
 {- | Derive the handshake traffic secrets CHTS and SHTS
 Note that unlike in the KEMTLS spec, these are derived from ss_s rather than ss_e
@@ -36,3 +36,27 @@ deriveHandshakeSecret ss_s = do
     shts <- expandLabelWithCurrentTranscript @ByteString _HS "s hs traffic"
 
     pure (mkSizedOrError $ toShort chts, mkSizedOrError $ toShort shts)
+
+deriveMasterSecret ::
+    forall m.
+    (Monad m) =>
+    -- | ss_s
+    SharedSecret ->
+    -- | ss_e
+    SharedSecret ->
+    TranscriptT m (SharedSecret, SharedSecret)
+deriveMasterSecret ss_s ss_e = do
+    dES <- deriveEarlySecret ss_s
+    let _HS = HKDF.extract @_ @ByteString @ByteString dES (Sized.toStrictBS ss_e)
+
+    let dHS = expandLabel @ByteString _HS "derived" ""
+
+    let _MS = HKDF.extract @_ @ByteString @ByteString dHS (Sized.toStrictBS ss_e)
+
+    fk_c <- expandLabelWithCurrentTranscript @ByteString _MS "c finished"
+    fk_s <- expandLabelWithCurrentTranscript @ByteString _MS "s finished"
+
+    pure
+        ( mkSizedOrError $ toShort fk_c
+        , mkSizedOrError $ toShort fk_s
+        )

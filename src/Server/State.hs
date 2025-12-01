@@ -40,5 +40,5 @@ data ClientState
       SentReply0 SharedSecret
     | SentReply1 SharedSecret
     | Phase3 SharedSecret
-    | Completed
+    | Completed {ss_s :: SharedSecret, ss_e :: SharedSecret}
     deriving stock (Show)
