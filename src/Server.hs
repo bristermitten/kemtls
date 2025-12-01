@@ -6,12 +6,9 @@ import Control.Exception qualified as E
 import Assertions (assertM, expect)
 import Constants
 import Control.Exception.Context qualified as E
-import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Except (throwError)
 import Cookie
-import Crypto.Hash (SHAKE256 (SHAKE256))
-import Crypto.KDF.HKDF qualified as HKDF
 import Data.Vector.Fixed qualified as Fixed
-import HKDF (expandLabel, expandLabelWithCurrentTranscript)
 import KEMTLS
 import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, finalizeMcTiny, mctinyHash, seedToE)
 import Network.Socket
@@ -158,7 +155,7 @@ processClientHello = do
     let conn = clientSocket client
 
     clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn ()
-    putStrLn $ "Received ClientHello: " <> show clientHello
+    putStrLn $ "Received ClientHello."
     expect (nonceSuffix (chNonce clientHello) == Nonce.phase0C2SNonce) ("Invalid nonce in ClientHello: " <> show (chNonce clientHello))
 
     globalState <- lift getGlobalState
@@ -167,12 +164,8 @@ processClientHello = do
 
     ss_s <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
 
-    dES <- lift $ deriveEarlySecret ss_s
-    putStrLn $ "Derived dES: " <> show dES
-
     -- generate 32 byte seed E
     seed <- liftIO generateValidSeed
-    putStrLn $ "Generated Reply0.seed: " <> show seed
 
     (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss_s seed 0
 
@@ -345,17 +338,8 @@ handleServerFinished = do
         _ -> throwError "Invalid client state in handleServerFinished"
 
     (chts, shts) <- lift $ deriveHandshakeSecret ss_s
-    print ("Server Shared Secrets:", ss_s, ss_e)
     (fk_c, fk_s) <- lift $ deriveMasterSecret ss_s ss_e
-    putStrLn $ "Derived fk_s: " <> show fk_s
     hmac <- lift $ getTranscriptHMAC fk_s
-    putStrLn $ "Expected HMAC: " <> show hmac
-
-    {-
-    Recording message to transcript "\SOH\NUL\NUL\252\ETX\172\134\246\152\158"
-    Recording message to transcript "\STX\NUL\NUL{\ETX\172\207)\134\219"
-
-    -}
 
     nonceMRandomPart <-
         liftIO $
@@ -371,14 +355,13 @@ handleServerFinished = do
                 { sfHMAC = hmac
                 , sfNonce = nonceM
                 }
-    print ("Server SHTS:", shts)
     lift $ Protocol.sendTLSRecord (clientSocket client) shts expectedFinished
     putStrLn "Sent ServerFinished. Expecting ClientFinished..."
 
     cfHmac <- lift $ getTranscriptHMAC fk_c
 
     clientFinished <- lift $ Protocol.recvTLSRecord @ClientFinished (clientSocket client) chts
-    putStrLn $ "Received ClientFinished: " <> show clientFinished
+    putStrLn "Received ClientFinished."
 
     expect
         (nonceSuffix (cfNonce clientFinished) == Nonce.kemtlsNonceSuffix)
