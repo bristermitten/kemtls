@@ -8,6 +8,7 @@ import Constants
 import Control.Exception.Context qualified as E
 import Control.Monad.Except (throwError)
 import Cookie
+import Data.ByteString qualified as BS
 import Data.Vector.Fixed qualified as Fixed
 import KEMTLS
 import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, finalizeMcTiny, mctinyHash, seedToE)
@@ -147,7 +148,12 @@ handshakeLoop = do
         Completed {} -> do
             putStrLn "Waiting for ServerFinished..."
             handleServerFinished
-            putStrLn "Handshake complete."
+            putStrLn "Handshake complete. Exchanging data..."
+            handshakeLoop
+        ExchangingData {} -> do
+            -- loop forever listening for messages and echoing them back
+            handleDataExchange
+            handshakeLoop
 
 processClientHello :: ExceptT Text ConnectionM ()
 processClientHello = do
@@ -155,7 +161,7 @@ processClientHello = do
     let conn = clientSocket client
 
     clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn ()
-    putStrLn $ "Received ClientHello."
+    putStrLn "Received ClientHello."
     expect (nonceSuffix (chNonce clientHello) == Nonce.phase0C2SNonce) ("Invalid nonce in ClientHello: " <> show (chNonce clientHello))
 
     globalState <- lift getGlobalState
@@ -365,7 +371,7 @@ handleServerFinished = do
 
     expect
         (nonceSuffix (cfNonce clientFinished) == Nonce.kemtlsNonceSuffix)
-        "Invalid ClientFinished nonce suffix."
+        ("Invalid ClientFinished nonce suffix." <> show (cfNonce clientFinished))
 
     expect
         (cfHmac == cfHMAC clientFinished)
@@ -373,6 +379,35 @@ handleServerFinished = do
 
     expect (cfHmac /= hmac) "Client Error: ClientFinished HMAC should not match ServerFinished HMAC!"
     putStrLn "ClientFinished HMAC verified successfully."
+    lift $ setClientState (ExchangingData ss_s ss_e)
+
+handleDataExchange :: ExceptT Text ConnectionM ()
+handleDataExchange = do
+    client <- lift (lift Prelude.get)
+    let conn = clientSocket client
+
+    ss_e <- gets (ss_e . clientState)
+    ss_s <- gets (ss_s . clientState)
+
+    (cats, sats) <- lift $ deriveApplicationSecret ss_s ss_e
+
+    appData <- lift $ Protocol.recvTLSRecord @ApplicationData conn cats
+    putStrLn $
+        "Received ApplicationData: "
+            <> show
+                ( decodeUtf8 @Text $
+                    SizedBS.toStrictBS
+                        appData.adData
+                )
+
+    -- Echo back the same data
+    let echoedData = SizedBS.mkSizedOrError $ toShort $ SizedBS.toStrictBS appData.adData
+    let appPacket =
+            ApplicationData
+                { adData = echoedData
+                }
+    lift $ Protocol.sendTLSRecord conn sats appPacket
+    putStrLn "Sent echoed ApplicationData."
 
 handleC0AndMAndSM ::
     (HasCallStack) =>

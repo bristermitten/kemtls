@@ -76,3 +76,7 @@
   - adding support for certificates would be possible but is out of scope of this proof-of-concept
 
 **AEAD**: While TLS tends to use AES-GCM or CHACHA, we will use XSalsa20 + Poly1305 as in McTiny for consistency. All KEMTLS messages sent under this scheme reuse the McTiny nonce system of $[N/M] || a || b$. Specifically, it uses the suffix $0xFFFE$, as this doesn't clash with any other nonces used in McTiny as far as I can tell. Since TLS packets are already identified by their record headers, we can safely reuse nonces like this.
+
+
+## Downgrade Resilience
+

@@ -4,6 +4,7 @@ import Assertions (assertM)
 import Client
 import Client.State
 import Constants
+import Data.ByteString qualified as BS
 import Data.Map.Strict qualified as Map
 import Data.Vector.Fixed qualified as Fixed
 import KEMTLS
@@ -252,3 +253,30 @@ runFinishedPhase = do
                 , cfNonce = newNonce
                 }
     Protocol.sendTLSRecord socket chts clientFinished
+
+    putStrLn "Sent ClientFinished. Handshake complete."
+
+    putStrLn "KEMTLS handshake successfully completed!"
+
+    putStrLn "Sending test application data..."
+
+    (cats, sats) <- deriveApplicationSecret ss_s ss_e
+
+    let appData = SizedBS.mkSizedOrPad "Hello, secure world! KEMTLS and McTiny works :D"
+    let appPacket =
+            ApplicationData
+                { adData = appData
+                }
+
+    Protocol.sendTLSRecord socket cats appPacket
+
+    putStrLn "Test application data sent, waiting for server response..."
+
+    response <- Protocol.recvTLSRecord @ApplicationData socket sats
+    let rawMsg = SizedBS.toStrictBS $ adData response
+    let cleanMsg = BS.takeWhile (/= 0) rawMsg
+    putStrLn $
+        "Received application data from server: "
+            <> show cleanMsg
+
+    putStrLn "Client session complete!!"

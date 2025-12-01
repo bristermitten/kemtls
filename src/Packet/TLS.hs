@@ -224,3 +224,41 @@ instance KEMTLSPacket ClientFinished where
                 { cfHMAC = decryptedData
                 , cfNonce = nonce
                 }
+
+newtype ApplicationData
+    = ApplicationData
+    { adData :: SizedByteString 1024
+    -- ^ the api i designed doesn't really work with variable length data so we will just pad it and set a max length
+    }
+
+instance TLSRecord ApplicationData where
+    recordID = 0x17
+
+instance KEMTLSPacket ApplicationData where
+    type PacketSize ApplicationData = EncryptedSize 1024
+    type PacketPutContext ApplicationData = SharedSecret
+    type PacketGetContext ApplicationData = SharedSecret
+    type PacketGetResult ApplicationData = ApplicationData
+
+    putPacket ss appData = do
+        let payload = appData.adData
+        let nonce =
+                -- at this point we will just use zeroes
+                Nonce.parseNonce (Sized.replicate 0)
+        encrypted <- liftIO $ encryptPacketData payload nonce ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+
+    getPacket ss input = do
+        let encryptedData =
+                runGet
+                    ( do
+                        getSizedByteString @(EncryptedSize 1024)
+                    )
+                    input
+        let nonce = Nonce.parseNonce (Sized.replicate 0)
+        decryptedData <- liftIO $ decryptPacketData encryptedData nonce ss
+        pure $
+            ApplicationData
+                { adData = decryptedData
+                }

@@ -41,6 +41,7 @@ class ByteStringLike t where
     bsAtIndex :: t -> Int -> Word8
     bsTake :: Int -> t -> t
     bsSplitAt :: Int -> t -> (t, t)
+    bsAppend :: t -> t -> t
 
 instance ByteStringLike BS.ByteString where
     toByteString = id
@@ -50,6 +51,7 @@ instance ByteStringLike BS.ByteString where
     bsAtIndex = BS.index
     bsTake = BS.take
     bsSplitAt = BS.splitAt
+    bsAppend = BS.append
 
 instance ByteStringLike SBS.ShortByteString where
     toByteString = fromShort
@@ -62,6 +64,8 @@ instance ByteStringLike SBS.ShortByteString where
     bsSplitAt n sbs =
         let (a, b) = BS.splitAt n (fromShort sbs)
          in (toShort a, toShort b)
+    bsAppend sbs1 sbs2 =
+        toShort (BS.append (fromShort sbs1) (fromShort sbs2))
 
 instance ByteStringLike LBS.ByteString where
     toByteString = toStrict
@@ -71,10 +75,7 @@ instance ByteStringLike LBS.ByteString where
     bsAtIndex lbs i = LBS.index lbs (fromIntegral i)
     bsTake n = LBS.take (fromIntegral n)
     bsSplitAt n = LBS.splitAt (fromIntegral n)
-
--- =========================================================================
--- SIZED STRING INTERFACE
--- =========================================================================
+    bsAppend = LBS.append
 
 class (ByteStringLike (Impl t)) => SizedString t (n :: Nat) where
     type Impl t
@@ -192,6 +193,20 @@ mkSizedOrError bs =
         Nothing -> error $ "Incorrect length for SizedByteString: expected " <> show expectedLen <> ", got " <> show (bsLength bs)
     where
         expectedLen = natVal (Proxy @n)
+
+mkSizedOrPad :: forall n t. (KnownNat n, SizedString t n) => Impl t -> t n
+mkSizedOrPad bs =
+    let expectedLen = natToNum @n @Int
+        actualLen = bsLength bs
+     in if actualLen == expectedLen
+            then unsafeMkSized bs
+            else
+                if actualLen > expectedLen
+                    then error $ "Cannot pad SizedByteString: input longer than expected length " <> show expectedLen <> ", got " <> show actualLen
+                    else
+                        let padding = bsReplicate (fromIntegral (expectedLen - actualLen)) 0
+                            paddedBs = bs `bsAppend` padding
+                         in unsafeMkSized paddedBs
 
 putSizedByteString :: (SizedString t n) => t n -> Put
 putSizedByteString sized = putByteString (toByteString (fromSized sized))

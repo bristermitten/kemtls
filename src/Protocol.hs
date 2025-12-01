@@ -45,7 +45,7 @@ sendPacket sock secret packet = do
                 <> " bytes."
     sendAll sock packetData
 
-recvExact :: (MonadIO m) => Socket -> Int64 -> m LBS.ByteString
+recvExact :: (MonadIO m, HasCallStack) => Socket -> Int64 -> m LBS.ByteString
 recvExact sock n = liftIO $ go n
     where
         go 0 = return LBS.empty
