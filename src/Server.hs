@@ -66,7 +66,6 @@ kemtlsServer mhost port serverSecretKey = do
                 serverState <- readMVar stateVar
                 let cid = length (connectedClients serverState) + 1
 
-                -- Create the initial Local State for this client
                 let clientLocalState = newClient cid conn
 
                 forkFinally
@@ -74,11 +73,15 @@ kemtlsServer mhost port serverSecretKey = do
                     ( \result -> do
                         case result of
                             Left ex ->
-                                putStrLn $
-                                    "Thread crashed:\n"
-                                        <> displayException ex
-                                        <> "\n"
-                                        <> E.displayExceptionContext (E.someExceptionContext ex)
+                                case fromException ex of
+                                    Just Protocol.ConnectionClosed ->
+                                        putStrLn $ "Client " <> show cid <> " disconnected."
+                                    Nothing ->
+                                        putStrLn $
+                                            "Thread crashed:\n"
+                                                <> displayException ex
+                                                <> "\n"
+                                                <> E.displayExceptionContext (E.someExceptionContext ex)
                             Right _ -> putStrLn "Thread finished normally"
                         cleanupClient stateVar cid conn
                     )

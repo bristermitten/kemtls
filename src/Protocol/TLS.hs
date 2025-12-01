@@ -1,10 +1,11 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DeriveAnyClass #-}
 
 module Protocol.TLS where
 
 import Assertions (assertM)
 import Constants (kemTLSMcTinyVersion)
-import Data.Binary qualified
+import Control.Exception (throwIO)
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.ByteString qualified as BS
@@ -17,6 +18,10 @@ import Packet.TLS
 import Protocol (recvExact)
 import Transcript (TranscriptT)
 import Transcript qualified
+
+data KEMTLSException = ConnectionClosed
+    deriving stock (Show)
+    deriving anyclass (Exception)
 
 recvTLSRecord ::
     forall a m.
@@ -37,6 +42,9 @@ recvTLSRecord sock context = do
 
     -- Read record header
     recType <- liftIO $ recv sock 1
+    when (BS.null recType) $
+        liftIO $
+            throwIO ConnectionClosed
     ver <- liftIO $ recvExact sock 2
     lenBytes <- liftIO $ recvExact sock 2
     let expectedSize = fromIntegral $ natVal (Proxy @(PacketSize a))
