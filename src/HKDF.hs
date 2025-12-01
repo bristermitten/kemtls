@@ -10,7 +10,7 @@ import Data.ByteArray qualified as BA
 import Data.ByteString qualified as B
 import Transcript
 
-type HKDFHashAlgorithm = SHA384
+type HKDFHashAlgorithm = SHA256
 
 {-
 	// CAHTS <- HKDF.Expand(AHS, "c ahs traffic", CH..CKC)

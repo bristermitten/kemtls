@@ -58,6 +58,17 @@ readPacket = do
 
     Protocol.recvPacket @a sock secret
 
+readPacketWithContext ::
+    forall a.
+    ( KEMTLSPacket a
+    , KnownNat (PacketSize a)
+    ) =>
+    PacketGetContext a ->
+    ClientM (PacketGetResult a)
+readPacketWithContext context = do
+    sock <- asks envSocket
+    Protocol.recvPacket @a sock context
+
 sendPacket ::
     ( KEMTLSPacket a
     , KnownNat (PacketSize a)
@@ -69,3 +80,14 @@ sendPacket packet = do
     secret <- asks envSharedSecret
 
     liftIO $ Protocol.sendPacket sock secret packet
+
+sendPacketWithContext ::
+    ( KEMTLSPacket a
+    , KnownNat (PacketSize a)
+    ) =>
+    PacketPutContext a ->
+    a ->
+    ClientM ()
+sendPacketWithContext context packet = do
+    sock <- asks envSocket
+    liftIO $ Protocol.sendPacket sock context packet

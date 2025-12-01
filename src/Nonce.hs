@@ -3,7 +3,7 @@ module Nonce where
 import Constants (NonceRandomPartBytes, PacketNonceBytes)
 import Data.Binary (Get, Put)
 import Data.Binary.Put (putByteString)
-import Data.ByteString (pack, unpack)
+import Data.ByteString (unpack)
 import GHC.TypeLits
 import SizedByteString (SizedByteString (..), SizedString (unsafeMkSized), appendSized, toStrictBS)
 import SizedByteString qualified as SizedBS

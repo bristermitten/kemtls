@@ -188,13 +188,14 @@ processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
-    let ss = case clientState client of
+    let ss_s = case clientState client of
             SentReply0 secret -> secret
             _ -> error "Invalid client state in processQuery1"
 
+    (chts, shts) <- lift $ deriveHandshakeSecret ss_s
     for_ [1 .. mcTinyRowBlocks] $ \rowPos -> do
         for_ [1 .. mcTinyColBlocks] $ \colPos -> do
-            _packet <- lift $ Protocol.recvPacket @Query1 conn ss
+            _packet <- lift $ Protocol.recvPacket @Query1 conn chts
             (ss, s_m, s, nonceM, e) <-
                 lift $
                     handleC0AndMAndSM
@@ -228,20 +229,21 @@ processQuery1 = do
                         , r1Cookie1 = cookie1
                         , r1Nonce = nonceM `Nonce.withSuffix` Nonce.phase1S2CNonce rowPos colPos
                         }
-            liftIO $ sendPacket client ss reply
+            liftIO $ sendPacket client shts reply
     putStrLn "Completed processing Query1."
-    setClientState (SentReply1 ss)
+    setClientState (SentReply1 ss_s)
 
 processQuery2 :: (HasCallStack) => ExceptT Text ConnectionM ()
 processQuery2 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
-    let ss = case clientState client of
+    let ss_s = case clientState client of
             SentReply1 secret -> secret
             _ -> error "Invalid client state in processQuery1"
 
+    (chts, shts) <- lift $ deriveHandshakeSecret ss_s
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
-        packet <- lift $ Protocol.recvPacket @Query2 conn ss
+        packet <- lift $ Protocol.recvPacket @Query2 conn chts
 
         globalState <- lift getGlobalState
         (ss, s_m, s, nonceM, e) <- lift $ handleC0AndMAndSM (query2Cookie0 packet) (query2Nonce packet)
@@ -281,14 +283,14 @@ processQuery2 = do
         finalPiece <- liftIO $ readMVar pieceVar
 
         liftIO $
-            sendPacket client ss $
+            sendPacket client shts $
                 Reply2
                     { r2Cookie0 = query2Cookie0 packet
                     , r2Syndrome2 = finalPiece
                     , r2Nonce = nonceM `Nonce.withSuffix` Nonce.phase2S2CNonce piecePos
                     }
 
-    setClientState (Phase3 ss)
+    setClientState (Phase3 ss_s)
 
 processQuery3 :: ExceptT Text ConnectionM ()
 processQuery3 = do

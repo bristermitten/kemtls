@@ -5,6 +5,7 @@ module KEMTLS where
 import Crypto.KDF.HKDF qualified as HKDF
 import HKDF
 import McTiny
+import SizedByteString (mkSizedOrError)
 import SizedByteString qualified as Sized
 import Transcript
 
@@ -19,7 +20,7 @@ kdf_dES = do
 Note that unlike in the KEMTLS spec, these are derived from ss_s rather than ss_e
 since we don't know ss_e yet due to McTiny's flow
 -}
-deriveHandshakeSecret :: forall m. (Monad m) => SharedSecret -> TranscriptT m (ByteString, ByteString)
+deriveHandshakeSecret :: forall m. (Monad m) => SharedSecret -> TranscriptT m (SharedSecret, SharedSecret)
 deriveHandshakeSecret ss_s = do
     dES <- kdf_dES
 
@@ -27,4 +28,4 @@ deriveHandshakeSecret ss_s = do
     chts <- expandLabelWithCurrentTranscript @ByteString _HS "c hs traffic"
     shts <- expandLabelWithCurrentTranscript @ByteString _HS "s hs traffic"
 
-    pure (chts, shts)
+    pure (mkSizedOrError $ toShort chts, mkSizedOrError $ toShort shts)

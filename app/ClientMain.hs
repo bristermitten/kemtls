@@ -65,11 +65,16 @@ runClientHello = do
 
     let cookie = shCookieC0 response
     let longTermNonce = shNonce response
+
+    (chts, shts) <- deriveHandshakeSecret ss_s
+
     put
         ( Phase1
             cookie
             (Nonce.randomPart longTermNonce)
             emptyReceivedBlocks
+            chts
+            shts
         )
 
     putStrLn "Continuing McTiny as usual..."
@@ -98,9 +103,11 @@ runPhase1 = do
                         packetNonce
                         cookie
 
-            sendPacket queryPacket
+            chts <- gets chts
+            sendPacketWithContext chts queryPacket
 
-            receivedPacket <- readPacket @Reply1
+            shts <- gets shts
+            receivedPacket <- readPacketWithContext @Reply1 shts
 
             let reply1Nonce = r1Nonce receivedPacket
 
@@ -119,13 +126,17 @@ runPhase1 = do
                     _ -> error "Invalid client state when storing Reply1 blocks."
                 )
     blocks <- gets receivedBlocks
-    put (Phase2 cookie nonce blocks [])
+    chts <- gets chts
+    shts <- gets shts
+    put (Phase2 cookie nonce blocks [] chts shts)
     runPhase2 cookie
 
 runPhase2 :: SizedByteString CookieC0Bytes -> ClientM ()
 runPhase2 cookie0 = do
     putStrLn "Running Phase 2..."
     allCookies <- gets receivedBlocks
+    chts <- gets chts
+    shts <- gets shts
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
         cookies <-
             forM [i * mctinyV - mctinyV + 1 .. i * mctinyV] $ \rowPos -> do
@@ -141,9 +152,9 @@ runPhase2 cookie0 = do
                     , query2Cookie0 = cookie0
                     , query2Nonce = nonce `Nonce.withSuffix` Nonce.phase2C2SNonce i
                     }
-        sendPacket packet
+        sendPacketWithContext chts packet
 
-        reply <- readPacket @Reply2
+        reply <- readPacketWithContext @Reply2 shts
 
         modify
             ( \case

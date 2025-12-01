@@ -5,12 +5,10 @@ module Packet.TLS where
 
 import Assertions (assertM)
 import Constants (CiphertextBytes, CookieC0Bytes, EncryptedSize, PacketNonceBytes)
-import Control.Exception (assert)
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
-import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as LBS
 import GHC.TypeLits (type (+))
 import McTiny (Ciphertext, SharedSecret, decryptPacketData, encryptPacketData)
@@ -61,8 +59,7 @@ instance KEMTLSPacket ClientHello where
         header <- getWord8
         assertM (header == recordID @ClientHello) "ClientHello record ID mismatch"
 
-        -- Read 3-byte length (24-bit big-endian)
-        length <- get3ByteLength
+        _length <- get3ByteLength
 
         version <- getWord16be
         random <- getNonce
@@ -106,8 +103,7 @@ instance KEMTLSPacket ServerHello where
                 flip runGet input $ do
                     header <- getWord8
                     assertM (header == recordID @ServerHello) "ServerHello record ID mismatch"
-                    -- Read 3-byte length (24-bit big-endian)
-                    length <- get3ByteLength
+                    _length <- get3ByteLength
                     version <- getWord16be
                     random <- getNonce
                     encryptedCookie <- getSizedByteString
