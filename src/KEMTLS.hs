@@ -20,6 +20,8 @@ deriveEarlySecret ss_s = do
     -- dES <- HKDF.Expand(ES, "derived", ∅)
     pure $ expandLabel _ES "derived" ""
 
+
+
 {- | Derive the handshake traffic secrets CHTS and SHTS
 Note that unlike in the KEMTLS spec, these are derived from ss_s rather than ss_e
 since we don't know ss_e yet due to McTiny's flow.
@@ -46,12 +48,7 @@ deriveMasterSecret ::
     SharedSecret ->
     TranscriptT m (SharedSecret, SharedSecret)
 deriveMasterSecret ss_s ss_e = do
-    dES <- deriveEarlySecret ss_s
-    let _HS = HKDF.extract @_ @ByteString @ByteString dES (Sized.toStrictBS ss_e)
-
-    let dHS = expandLabel @ByteString _HS "derived" ""
-
-    let _MS = HKDF.extract @_ @ByteString @ByteString dHS (Sized.toStrictBS ss_e)
+    _MS <- deriveMasterSecretBase ss_s ss_e
 
     fk_c <- expandLabelWithCurrentTranscript @ByteString _MS "c finished"
     fk_s <- expandLabelWithCurrentTranscript @ByteString _MS "s finished"
@@ -59,4 +56,35 @@ deriveMasterSecret ss_s ss_e = do
     pure
         ( mkSizedOrError $ toShort fk_c
         , mkSizedOrError $ toShort fk_s
+        )
+
+deriveMasterSecretBase ::
+    (Monad m) =>
+    SharedSecret ->
+    SharedSecret ->
+    TranscriptT m (HKDF.PRK HKDFHashAlgorithm)
+deriveMasterSecretBase ss_s ss_e = do
+    dES <- deriveEarlySecret ss_s
+    let _HS = HKDF.extract @_ @ByteString @ByteString dES (Sized.toStrictBS ss_e)
+    let dHS = expandLabel @ByteString _HS "derived" ""
+    let _MS = HKDF.extract @_ @ByteString @ByteString dHS (Sized.toStrictBS ss_e)
+    pure _MS
+
+deriveApplicationSecret ::
+    forall m.
+    (Monad m) =>
+    -- | ss_s
+    SharedSecret ->
+    -- | ss_e
+    SharedSecret ->
+    TranscriptT m (SharedSecret, SharedSecret)
+deriveApplicationSecret ss_s ss_e = do
+    _MS <- deriveMasterSecretBase ss_s ss_e
+
+    cats <- expandLabelWithCurrentTranscript @ByteString _MS "c ap traffic"
+    sats <- expandLabelWithCurrentTranscript @ByteString _MS "s ap traffic"
+
+    pure
+        ( mkSizedOrError $ toShort cats
+        , mkSizedOrError $ toShort sats
         )
