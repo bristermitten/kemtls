@@ -38,20 +38,7 @@ runTranscriptT (TranscriptT action) = evalStateT action emptyTranscript
 
 recordMessage :: (Monad m, MonadIO m) => BS.ByteString -> TranscriptT m ()
 recordMessage bs = do
-    -- 1. Perform the update
     TranscriptT $ modify (`hashUpdate` bs)
-
-    -- 2. PEEK at the result for debugging
-    -- We get the hash of the state *right now* without destroying the state
-    (TranscriptHash currentDigest) <- getTranscriptHash
-
-    let hexHash :: Text = decodeUtf8 (Base16.encode (BA.convert currentDigest))
-    let chunkHex :: Text = decodeUtf8 (Base16.encode (BS.take 10 bs))
-    let len = BS.length bs
-
-    liftIO $ putTextLn $ "[TRANSCRIPT] Added " <> show len <> " bytes"
-    liftIO $ putTextLn $ "    Chunk Start: " <> chunkHex <> "..."
-    liftIO $ putTextLn $ "    Running Hash: " <> hexHash
 
 getTranscriptHash :: (Monad m) => TranscriptT m TranscriptHash
 getTranscriptHash = TranscriptT $ do
