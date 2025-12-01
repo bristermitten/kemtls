@@ -52,14 +52,14 @@ runClientHello = do
                 , chCiphertext = ct
                 }
 
-    socket <- asks envSocket
-    Protocol.sendTLSRecord socket () clientHello
-
-    dES <- kdf_dES
+    ss_s <- asks envSharedSecret
+    dES <- derive_dES ss_s
     putStrLn $ "Derived dES: " <> show dES
     putStrLn "ClientHello sent. Awaiting server response..."
 
-    ss_s <- asks envSharedSecret
+    socket <- asks envSocket
+    Protocol.sendTLSRecord socket () clientHello
+
     response <- Protocol.recvTLSRecord @ServerHello socket ss_s
     putStrLn $ "Received ServerHello: " <> show response
 

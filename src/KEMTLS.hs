@@ -9,11 +9,9 @@ import SizedByteString (mkSizedOrError)
 import SizedByteString qualified as Sized
 import Transcript
 
-kdf_dES :: (Monad m) => TranscriptT m ByteString
-kdf_dES = do
-    -- ES <- HKDF.Extract(0, 0)
-    let _ES = HKDF.extract @_ @ByteString @ByteString "\x0" "\x0"
-    -- dES <- HKDF.Expand(ES, "derived", ∅)
+derive_dES :: (Monad m) => SharedSecret -> TranscriptT m ByteString
+derive_dES ss_s = do
+    let _ES = HKDF.extract @_ @ByteString @ByteString "\x0" (Sized.toStrictBS ss_s)
     expandLabelWithCurrentTranscript @ByteString _ES "derived"
 
 {- | Derive the handshake traffic secrets CHTS and SHTS
@@ -22,7 +20,7 @@ since we don't know ss_e yet due to McTiny's flow
 -}
 deriveHandshakeSecret :: forall m. (Monad m) => SharedSecret -> TranscriptT m (SharedSecret, SharedSecret)
 deriveHandshakeSecret ss_s = do
-    dES <- kdf_dES
+    dES <- derive_dES ss_s
 
     let _HS = HKDF.extract @_ @ByteString @ByteString dES (Sized.toStrictBS ss_s)
     chts <- expandLabelWithCurrentTranscript @ByteString _HS "c hs traffic"

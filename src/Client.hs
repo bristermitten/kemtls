@@ -72,6 +72,7 @@ sendPacket ::
     ( KEMTLSPacket a
     , KnownNat (PacketSize a)
     , PacketPutContext a ~ SharedSecret
+    , HasCallStack
     ) =>
     a -> ClientM ()
 sendPacket packet = do
@@ -83,6 +84,7 @@ sendPacket packet = do
 sendPacketWithContext ::
     ( KEMTLSPacket a
     , KnownNat (PacketSize a)
+    , HasCallStack
     ) =>
     PacketPutContext a ->
     a ->

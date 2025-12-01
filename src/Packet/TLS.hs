@@ -140,3 +140,6 @@ get3ByteLength = do
                 .|. fromIntegral b2 ::
                 Word32
     pure len
+
+data ClientFinished = ClientFinished
+    {}

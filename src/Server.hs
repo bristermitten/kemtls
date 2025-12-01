@@ -157,14 +157,15 @@ processClientHello = do
     clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn ()
     putStrLn $ "Received ClientHello: " <> show clientHello
     expect (nonceSuffix (chNonce clientHello) == Nonce.phase0C2SNonce) ("Invalid nonce in ClientHello: " <> show (chNonce clientHello))
-    dES <- lift kdf_dES
-    putStrLn $ "Derived dES: " <> show dES
 
     globalState <- lift getGlobalState
 
     putStrLn "Decapsulating shared secret..."
 
     ss_s <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
+
+    dES <- lift $ derive_dES ss_s
+    putStrLn $ "Derived dES: " <> show dES
 
     -- generate 32 byte seed
     seed <- liftIO $ randomSized @CookieSeedBytes
