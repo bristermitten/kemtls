@@ -52,6 +52,11 @@
 
 # Plan
 
-- `ClientHello` contains ciphertext ct_e instead of `pk_e`
-- then we do all the mctiny steps
 
+- We merge the McTiny Phase0 with the KEMTLS ClientHello phase
+    - `ClientHello` contains the encapsulation of the server static key (ct_s) instead of the ephemeral public key (pk_e), along with `ClientRandom` which is used as the McTiny nonce R
+    - server responds with `ServerHello` containing the cookie C_0 encrypted with the static shared secret (ss_s), plus its own `ServerRandom`/Nonce N
+
+- We use TLS version 0x03AC to indicate that this isn't a standard TLS Server and only supports KEMTLS with McTiny
+    - 03 looks like the TLS major version
+    - AC = Advanced Cryptology :)

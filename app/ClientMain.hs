@@ -2,14 +2,16 @@ module ClientMain where
 
 import Client
 import Client.State
-import Constants (CookieC0Bytes, NonceRandomPartBytes, mcTinyColBlocks, mcTinyRowBlocks, mctinyV)
-import Data.ByteString qualified as BS
+import Constants
 import Data.Vector.Fixed qualified as Fixed
+import KEMTLS
 import McTiny
 import Nonce (Nonce (nonceSuffix))
 import Nonce qualified
 import Packet
+import Packet.TLS
 import Paths
+import Protocol.TLS qualified as Protocol
 import SizedByteString
 import SizedByteString qualified as SizedBS
 import Prelude hiding ((||))
@@ -30,54 +32,47 @@ main = do
 
     runClient (Just "127.0.0.1") "4433" ss serverPK keypair initialState $ do
         putStrLn "Starting KEMTLS client Phase 0..."
-        runPhase0
+        runClientHello
 
-runPhase0 :: ClientM ()
-runPhase0 = do
-    -- generate 176 random binary bits || 0, 0 for Query0.random
-    nonce <-
-        Nonce.parseNonce
-            <$> liftIO
-                ( randomSized @NonceRandomPartBytes
-                    <&> \r -> r `SizedBS.appendSized` Nonce.phase0C2SNonce
-                )
-    putStrLn $ "Generated Query0.random: " <> show nonce
-
+runClientHello :: ClientM ()
+runClientHello = do
+    putStrLn "Sending ClientHello..."
     ct <- gets ct
-    serverPK <- asks envServerPublicKey
-    serverPKHash <- lift $ lift (publicKeyBytes serverPK >>= mctinyHash)
-    putStrLn $ "Computed server public key hash: " <> show serverPKHash
-    sendPacket $
-        Query0
-            { query0NonceR = nonce
-            , query0ServerPKHash = serverPKHash
-            , query0CipherText = ct
-            , query0Extensions = []
-            }
 
-    putStrLn "Client initialized."
+    let clientVersion = kemTLSMcTinyVersion -- KEMTLS v1.0
+    nonceRandom <- liftIO $ randomSized @NonceRandomPartBytes
+    let nonce =
+            Nonce.parseNonce
+                (nonceRandom `SizedBS.appendSized` Nonce.phase0C2SNonce)
 
-    packet <- readPacket @Reply0
+    let clientHello =
+            ClientHello
+                { chVersion = clientVersion
+                , chNonce = nonce
+                , chCiphertext = ct
+                }
 
-    putStrLn $ "Received Reply0 packet: " <> show packet
+    socket <- asks envSocket
+    Protocol.sendTLSRecord socket clientHello
 
-    -- decode cookie
-    let cookie = r0Cookie0 packet
-    let longTermNonce = r0Nonce packet
+    dES <- kdf_dES
+    putStrLn $ "Derived dES: " <> show dES
+    putStrLn "ClientHello sent. Awaiting server response..."
 
-    putStrLn $ "Stored Opaque Cookie (" <> show (SizedBS.sizedLength cookie) <> " bytes)"
-    putStrLn "Handshake Phase 0 Complete."
-    putStrLn $ "Long term nonce: " <> show (BS.unpack $ SizedBS.toStrictBS $ Nonce.fullNonce longTermNonce)
+    response <- Protocol.recvTLSRecord @ServerHello socket
+    putStrLn $ "Received ServerHello: " <> show response
 
-    guard (nonceSuffix longTermNonce == Nonce.phase0S2CNonce)
-
+    let cookie = shCookieC0 response
+    let longTermNonce = shNonce response
     put
         ( Phase1
             cookie
             (Nonce.randomPart longTermNonce)
             emptyReceivedBlocks
         )
-    runPhase1
+
+    putStrLn "Continuing McTiny as usual..."
+    runPhase1 -- skip phase 0
 
 runPhase1 :: ClientM ()
 runPhase1 = do

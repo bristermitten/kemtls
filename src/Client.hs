@@ -8,6 +8,7 @@ import McTiny
 import Network.Socket
 import Packet
 import Protocol
+import Transcript (TranscriptT, runTranscriptT)
 
 -- | Read-only environment for the KEMTLS client
 data ClientEnv = ClientEnv
@@ -18,7 +19,7 @@ data ClientEnv = ClientEnv
     -- ^ Client's keypair (k, K)
     }
 
-type ClientM a = ReaderT ClientEnv (StateT ClientState IO) a
+type ClientM a = TranscriptT (ReaderT ClientEnv (StateT ClientState IO)) a
 
 runClient ::
     Maybe HostName ->
@@ -33,7 +34,7 @@ runClient mhost port ss serverPK localKP initialState action = do
     addr <- resolve
     E.bracket (open addr) close $ \sock -> do
         let env = ClientEnv sock ss serverPK localKP
-        evalStateT (runReaderT action env) initialState
+        evalStateT (runReaderT (runTranscriptT action) env) initialState
     where
         resolve = do
             let hints = defaultHints {addrSocketType = Stream}
@@ -58,11 +59,10 @@ readPacket = do
 
 sendPacket ::
     ( McTinyPacket a
-    , MonadIO m
     , KnownNat (PacketSize a)
     , PacketPutContext a ~ SharedSecret
     ) =>
-    a -> ReaderT ClientEnv m ()
+    a -> ClientM ()
 sendPacket packet = do
     sock <- asks envSocket
     secret <- asks envSharedSecret

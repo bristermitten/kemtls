@@ -4,6 +4,11 @@ module Constants where
 
 import GHC.TypeLits (type (+))
 
+-- KEMTLS constants
+
+kemTLSMcTinyVersion :: Word16
+kemTLSMcTinyVersion = 0x03AC
+
 -- #crypto_kem_mceliece6960119_PUBLICKEYBYTES
 #define public_key_bytes 1047319
 pkBytes :: Int

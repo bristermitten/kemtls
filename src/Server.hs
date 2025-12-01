@@ -5,28 +5,32 @@ import Control.Exception qualified as E
 
 import Constants
 import Control.Exception.Context qualified as E
-import Control.Monad (foldM)
 import Control.Monad.Except (MonadError, throwError)
 import Cookie
-import Crypto.Random
+import Crypto.Hash (SHAKE256 (SHAKE256))
+import Crypto.KDF.HKDF qualified as HKDF
 import Data.Vector.Fixed qualified as Fixed
-import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, createPiece, encryptPacketData, mctinyHash, seedToE)
+import HKDF (expandLabel, expandLabelWithCurrentTranscript)
+import KEMTLS
+import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, createPiece, decap, encryptPacketData, mctinyHash, seedToE)
 import Network.Socket
-import Nonce (NonceRandomPart (NonceRandomPart))
+import Nonce (Nonce (nonceSuffix), NonceRandomPart (NonceRandomPart))
 import Nonce qualified
 import Packet
+import Packet.TLS
 import Protocol qualified
+import Protocol.TLS qualified as Protocol
 import Server.State
 import SizedByteString as SizedBS
+import Transcript (TranscriptT, runTranscriptT)
 import Prelude hiding ((||))
 
 type ServerEnv = MVar ServerState
-type ConnectionM = ReaderT ServerEnv (StateT ClientInfo IO)
+type ConnectionM = TranscriptT (ReaderT ServerEnv (StateT ClientInfo IO))
 
 kemtlsServer :: Maybe HostName -> ServiceName -> McElieceSecretKey -> IO ()
 kemtlsServer mhost port serverSecretKey = do
     addr <- resolve
-    drg <- getSystemDRG
     cookieKey <- randomSized @32
     stateVar <-
         newMVar
@@ -65,7 +69,7 @@ kemtlsServer mhost port serverSecretKey = do
                 let clientLocalState = newClient cid conn
 
                 forkFinally
-                    (runStateT (runReaderT handleConnection stateVar) clientLocalState)
+                    (runStateT (runReaderT (runTranscriptT handleConnection) stateVar) clientLocalState)
                     ( \result -> do
                         case result of
                             Left ex ->
@@ -125,8 +129,8 @@ handshakeLoop = do
     putStrLn $ "Client " <> show (clientId client) <> " in state: " <> show (clientState client)
     case clientState client of
         Initialised -> do
-            putStrLn "Waiting for Query0..."
-            processQuery0
+            putStrLn "Waiting for ClientHello..."
+            processClientHello
             handshakeLoop
         SentReply0 {} -> do
             putStrLn "Waiting for Query1..."
@@ -143,16 +147,22 @@ handshakeLoop = do
         Completed -> do
             error "Client already completed handshake, expected no further messages."
 
-processQuery0 :: ExceptT Text ConnectionM ()
-processQuery0 = do
+processClientHello :: ExceptT Text ConnectionM ()
+processClientHello = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
 
-    stateVar <- lift ask
-    globalState <- liftIO $ readMVar stateVar
+    clientHello <- lift $ Protocol.recvTLSRecord @ClientHello conn
+    putStrLn $ "Received ClientHello: " <> show clientHello
+    expect (nonceSuffix (chNonce clientHello) == Nonce.phase0C2SNonce) ("Invalid nonce in ClientHello: " <> show (chNonce clientHello))
+    dES <- lift kdf_dES
+    putStrLn $ "Derived dES: " <> show dES
 
-    (query0, ss) <- lift $ Protocol.recvPacket @Query0 conn globalState
-    print query0
+    globalState <- lift getGlobalState
+
+    putStrLn "Decapsulating shared secret..."
+
+    ss <- liftIO $ decap globalState.serverSecretKey clientHello.chCiphertext
 
     -- generate 32 byte seed
     seed <- liftIO $ randomSized @CookieSeedBytes
@@ -160,15 +170,17 @@ processQuery0 = do
 
     (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss seed 0
 
-    let packet =
-            Reply0
-                { r0Cookie0 = cookie
-                , r0Nonce = nonce
+    let reply =
+            ServerHello
+                { shVersion = kemTLSMcTinyVersion
+                , shNonce = nonce
+                , shCookieC0 = cookie
                 }
+    putStrLn "Sending ServerHello..."
+    lift $ Protocol.sendTLSRecord conn reply
+    putStrLn "Sent ServerHello."
 
-    liftIO $ sendPacket client ss packet
-
-    setClientState (SentReply0 ss)
+    lift $ setClientState (SentReply0 ss)
 
 processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do

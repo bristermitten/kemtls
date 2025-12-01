@@ -57,6 +57,7 @@ common shared
     , directory
     , filepath
     , fixed-vector
+    , memory
     , mtl
     , network
     , network-transport
@@ -78,14 +79,20 @@ library
     Client.State
     Constants
     Cookie
+    HKDF
+    KEMTLS
     McTiny
+    McTinyArchive
     Nonce
     Packet
+    Packet.TLS
     Paths
     Protocol
+    Protocol.TLS
     Server
     Server.State
     SizedByteString
+    Transcript
     Utils
 
 executable server

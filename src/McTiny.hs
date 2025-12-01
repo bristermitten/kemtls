@@ -13,7 +13,7 @@ import Foreign
 import Foreign.C.Types
 import GHC.TypeLits (type (+), type (-), type (<=))
 import Nonce (Nonce, fullNonce)
-import SizedByteString (SizedByteString, SizedString (..), mkSized, mkSizedOrError, sizedLength)
+import SizedByteString (SizedByteString, SizedString (..), sizedLength)
 import SizedByteString qualified as SizedBS
 
 -- int crypto_kem_mceliece6960119_keypair(unsigned char *pk, unsigned char *sk);
@@ -132,18 +132,6 @@ newtype McElieceSecretKey = McElieceSecretKey (ForeignPtr Word8) deriving stock 
 
 type Ciphertext = SizedByteString CiphertextBytes
 type SharedSecret = SizedByteString SharedSecretBytes
-
-{-
-void packet_encrypt(const unsigned char *n,const unsigned char *k)
-{
-  if (packetformat != 1) invalid();
-  if (!packetformat) return;
-  packetformat = 2;
-  crypto_stream_xsalsa20_xor(packet,packet,packetpos,n,k);
-  crypto_onetimeauth_poly1305(packet+16,packet+32,packetpos-32,packet);
-  memset(packet,0,16);
-}
--}
 
 {- | Encrypt and authenticate packet data using XSalsa20 and Poly1305
 The data does not have to be the full packet, just part of the data
@@ -417,7 +405,7 @@ absorbSyndromeIntoPiece synd2BS synd1BS pieceIndex = do
             SizedBS.useAsCString synd1BS \synd1Ptr -> do
                 -- read synd1 input
                 c_mctiny_pieceabsorb
-                    newSyndrome2Ptr -- output synd2 
+                    newSyndrome2Ptr -- output synd2
                     (castPtr synd1Ptr) -- input synd1
                     (fromIntegral (pieceIndex - 1)) -- piece index (0-based)
 

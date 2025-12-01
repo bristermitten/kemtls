@@ -34,7 +34,7 @@ data ClientCookie = ClientCookie
     }
 
 data ClientState
-    = -- | In phase 0, waiting to send Reply0
+    = -- | waiting for ClientHello
       Initialised
     | -- | Reply 0 sent, receiving Query1s
       SentReply0 SharedSecret
