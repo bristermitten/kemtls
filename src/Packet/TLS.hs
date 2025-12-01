@@ -186,3 +186,41 @@ instance KEMTLSPacket ServerFinished where
                 { sfHMAC = decryptedData
                 , sfNonce = nonce
                 }
+
+data ClientFinished = ClientFinished
+    { cfHMAC :: SizedByteString HashBytes
+    , cfNonce :: Nonce "N"
+    }
+    deriving stock (Show)
+
+instance TLSRecord ClientFinished where
+    recordID = 0x14
+
+instance KEMTLSPacket ClientFinished where
+    type PacketSize ClientFinished = EncryptedSize HashBytes + PacketNonceBytes
+    type PacketPutContext ClientFinished = SharedSecret
+    type PacketGetContext ClientFinished = SharedSecret
+    type PacketGetResult ClientFinished = ClientFinished
+
+    putPacket ss finished = do
+        let payload = finished.cfHMAC
+        encrypted <- liftIO $ encryptPacketData payload (cfNonce finished) ss
+        pure $ runPut $ do
+            putSizedByteString encrypted
+            putNonce (cfNonce finished)
+
+    getPacket ss input = do
+        let (encryptedHMAC, nonce) =
+                runGet
+                    ( do
+                        encryptedHMAC <- getSizedByteString @(EncryptedSize HashBytes)
+                        nonce <- getNonce
+                        pure (encryptedHMAC, nonce)
+                    )
+                    input
+        decryptedData <- liftIO $ decryptPacketData encryptedHMAC nonce ss
+        pure $
+            ClientFinished
+                { cfHMAC = decryptedData
+                , cfNonce = nonce
+                }

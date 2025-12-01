@@ -1,3 +1,6 @@
+{-# LANGUAGE RequiredTypeArguments #-}
+{-# LANGUAGE TypeAbstractions #-}
+
 module Nonce where
 
 import Constants (NonceRandomPartBytes, PacketNonceBytes)

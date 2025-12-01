@@ -373,7 +373,23 @@ handleServerFinished = do
                 }
     print ("Server SHTS:", shts)
     lift $ Protocol.sendTLSRecord (clientSocket client) shts expectedFinished
-    putStrLn "Sent ServerFinished."
+    putStrLn "Sent ServerFinished. Expecting ClientFinished..."
+
+    cfHmac <- lift $ getTranscriptHMAC fk_c
+
+    clientFinished <- lift $ Protocol.recvTLSRecord @ClientFinished (clientSocket client) chts
+    putStrLn $ "Received ClientFinished: " <> show clientFinished
+
+    expect
+        (nonceSuffix (cfNonce clientFinished) == Nonce.kemtlsNonceSuffix)
+        "Invalid ClientFinished nonce suffix."
+
+    expect
+        (cfHmac == cfHMAC clientFinished)
+        ("Client Error: ClientFinished HMAC does not match expected value!" <> show (cfHMAC clientFinished) <> " vs " <> show cfHmac)
+
+    expect (cfHmac /= hmac) "Client Error: ClientFinished HMAC should not match ServerFinished HMAC!"
+    putStrLn "ClientFinished HMAC verified successfully."
 
 handleC0AndMAndSM ::
     (HasCallStack) =>

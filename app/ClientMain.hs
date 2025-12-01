@@ -226,7 +226,7 @@ runFinishedPhase = do
     (chts, shts) <- deriveHandshakeSecret ss_s
     (fk_c, fk_s) <- deriveMasterSecret ss_s ss_e
     putStrLn $ "Derived fk_s: " <> show fk_s
-    hmac <- getTranscriptHMAC fk_s
+    derivedHMAC <- getTranscriptHMAC fk_s
 
     socket <- asks envSocket
     serverFinished <- Protocol.recvTLSRecord @ServerFinished socket shts
@@ -238,7 +238,17 @@ runFinishedPhase = do
         "Client Error: Invalid ServerFinished nonce suffix."
 
     let expectedHMAC = sfHMAC serverFinished
-    putStrLn $ "Received HMAC: " <> show expectedHMAC
-    putStrLn $ "Expected HMAC: " <> show hmac
-    unless (hmac == expectedHMAC) $
+    unless (derivedHMAC == expectedHMAC) $
         error "Client Error: ServerFinished HMAC does not match expected value!"
+    putStrLn "ServerFinished HMAC verified successfully."
+
+    cfHMAC <- getTranscriptHMAC fk_c
+    ltNonce <- gets longTermNonce
+    let newNonce =
+            ltNonce `Nonce.withSuffix` Nonce.kemtlsNonceSuffix
+    let clientFinished =
+            ClientFinished
+                { cfHMAC = cfHMAC
+                , cfNonce = newNonce
+                }
+    Protocol.sendTLSRecord socket chts clientFinished
