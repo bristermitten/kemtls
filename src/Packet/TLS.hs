@@ -40,7 +40,11 @@ class (KEMTLSPacket a) => TLSRecord a where
 instance KEMTLSPacket ClientHello where
     type
         PacketSize ClientHello =
-            1 + PacketNonceBytes + CiphertextBytes
+            1 -- record id
+                + 3 -- length
+                + 2 -- version
+                + PacketNonceBytes
+                + CiphertextBytes
     type PacketPutContext ClientHello = ()
     type PacketGetContext ClientHello = ()
     type PacketGetResult ClientHello = ClientHello
@@ -78,7 +82,11 @@ instance TLSRecord ClientHello where
 instance KEMTLSPacket ServerHello where
     type
         PacketSize ServerHello =
-            1 + PacketNonceBytes + EncryptedSize CookieC0Bytes
+            1 -- record id
+                + 3 -- length
+                + 2 -- version
+                + PacketNonceBytes
+                + EncryptedSize CookieC0Bytes
 
     type PacketPutContext ServerHello = SharedSecret
     type PacketGetContext ServerHello = SharedSecret
@@ -143,6 +151,7 @@ get3ByteLength = do
 
 data ServerFinished = ServerFinished
     { sfHMAC :: SizedByteString HashBytes
+    , sfVerification :: SizedByteString 4
     , sfNonce :: Nonce "M"
     }
     deriving stock (Show)
@@ -151,13 +160,14 @@ instance TLSRecord ServerFinished where
     recordID = 0x14
 
 instance KEMTLSPacket ServerFinished where
-    type PacketSize ServerFinished = EncryptedSize HashBytes + PacketNonceBytes
+    type PacketSize ServerFinished = EncryptedSize (HashBytes + 4) + PacketNonceBytes
     type PacketPutContext ServerFinished = SharedSecret
     type PacketGetContext ServerFinished = SharedSecret
     type PacketGetResult ServerFinished = ServerFinished
 
     putPacket ss finished = do
-        encrypted <- liftIO $ encryptPacketData (sfHMAC finished) (sfNonce finished) ss
+        let payload = finished.sfHMAC Sized.|| finished.sfVerification
+        encrypted <- liftIO $ encryptPacketData payload (sfNonce finished) ss
         pure $ runPut $ do
             putSizedByteString encrypted
             putNonce (sfNonce finished)
@@ -166,14 +176,16 @@ instance KEMTLSPacket ServerFinished where
         let (encryptedHMAC, nonce) =
                 runGet
                     ( do
-                        encryptedHMAC <- getSizedByteString @(HashBytes + 16)
+                        encryptedHMAC <- getSizedByteString @(EncryptedSize (HashBytes + 4))
                         nonce <- getNonce
                         pure (encryptedHMAC, nonce)
                     )
                     input
-        decryptedHMAC <- liftIO $ decryptPacketData encryptedHMAC nonce ss
+        decryptedData <- liftIO $ decryptPacketData encryptedHMAC nonce ss
+        let (decryptedHMAC, verification) = Sized.splitAt @HashBytes decryptedData
         pure $
             ServerFinished
                 { sfHMAC = decryptedHMAC
+                , sfVerification = verification
                 , sfNonce = nonce
                 }

@@ -13,12 +13,13 @@ import Crypto.KDF.HKDF qualified as HKDF
 import Data.Vector.Fixed qualified as Fixed
 import HKDF (expandLabel, expandLabelWithCurrentTranscript)
 import KEMTLS
-import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, computePartialSyndrome, createPiece, decap, encryptPacketData, mctinyHash, seedToE)
+import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, mctinyHash, seedToE)
 import Network.Socket
 import Nonce (Nonce (nonceSuffix), NonceRandomPart (NonceRandomPart))
 import Nonce qualified
 import Packet
 import Packet.Generic
+import Packet.McTiny (McTinyPacket)
 import Packet.TLS
 import Protocol qualified
 import Protocol.TLS qualified as Protocol
@@ -169,8 +170,8 @@ processClientHello = do
     dES <- lift $ deriveEarlySecret ss_s
     putStrLn $ "Derived dES: " <> show dES
 
-    -- generate 32 byte seed
-    seed <- liftIO $ randomSized @CookieSeedBytes
+    -- generate 32 byte seed E
+    seed <- liftIO generateValidSeed
     putStrLn $ "Generated Reply0.seed: " <> show seed
 
     (cookie, nonce) <- liftIO $ createCookie0 (cookieSecretKey globalState) ss_s seed 0
@@ -313,6 +314,7 @@ processQuery3 = do
     -- Z <- hash(1, e, (c_1, c_2, ..., c_r), C)
     _Z <- liftIO $ mctinyHash (one 1 <> toStrictBS e <> toStrictBS (query3MergedPieces packet) <> toStrictBS _C)
 
+    print ("Computed _C and _Z:", _C, _Z)
     s_mHash <- liftIO $ mctinyHash (toStrictBS s_m)
     let mNonce = nonceM `Nonce.withSuffix` Nonce.phase3S2CNonce
     _C_Z <-
@@ -359,7 +361,13 @@ handleServerFinished = do
                 (NonceRandomPart nonceMRandomPart)
                 Nonce.kemtlsNonceSuffix
 
-    let expectedFinished = ServerFinished {sfHMAC = hmac, sfNonce = nonceM}
+    let expectedFinished =
+            ServerFinished
+                { sfHMAC = hmac
+                , sfVerification = mkSizedOrError "HELP"
+                , sfNonce = nonceM
+                }
+    print ("Server SHTS:", shts)
     lift $ Protocol.sendTLSRecord (clientSocket client) shts expectedFinished
     putStrLn "Sent ServerFinished."
 
@@ -392,7 +400,7 @@ getGlobalState = do
     liftIO $ readMVar stateVar
 
 sendPacket ::
-    ( KEMTLSPacket a
+    ( McTinyPacket a
     , KnownNat (PacketSize a)
     , MonadIO m
     , HasCallStack
@@ -401,3 +409,11 @@ sendPacket ::
 sendPacket client context packet = do
     let sock = clientSocket client
     liftIO $ Protocol.sendPacket sock context packet
+
+generateValidSeed :: IO (SizedByteString CookieSeedBytes)
+generateValidSeed = do
+    seed <- randomSized @CookieSeedBytes
+    valid <- checkSeed seed
+    if valid
+        then return seed
+        else generateValidSeed

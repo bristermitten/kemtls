@@ -5,12 +5,12 @@ module Protocol where
 import Data.ByteString.Lazy qualified as LBS
 import Network.Socket
 import Network.Socket.ByteString.Lazy
-import Packet
 import Packet.Generic
+import Packet.McTiny (McTinyPacket)
 
 recvPacket ::
     forall a m.
-    (KEMTLSPacket a, KnownNat (PacketSize a), MonadIO m, HasCallStack) =>
+    (McTinyPacket a, KnownNat (PacketSize a), MonadIO m, HasCallStack) =>
     Socket ->
     PacketGetContext a ->
     m (PacketGetResult a)
@@ -32,7 +32,7 @@ recvPacket sock secret = do
 
 sendPacket ::
     forall a.
-    (KEMTLSPacket a, HasCallStack, KnownNat (PacketSize a), HasCallStack) =>
+    (McTinyPacket a, HasCallStack, KnownNat (PacketSize a), HasCallStack) =>
     Socket -> PacketPutContext a -> a -> IO ()
 sendPacket sock secret packet = do
     packetData <- putPacket secret packet

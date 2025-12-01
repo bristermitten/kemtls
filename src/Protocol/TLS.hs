@@ -42,7 +42,7 @@ recvTLSRecord sock context = do
     let expectedSize = fromIntegral $ natVal (Proxy @(PacketSize a))
 
     assertM
-        (expectedSize + 5 == fromIntegral (runGet getWord16be lenBytes))
+        (expectedSize == fromIntegral (runGet getWord16be lenBytes))
         ("Expected packet size " <> show expectedSize <> " does not match length in TLS record header " <> show (runGet getWord16be lenBytes))
     assertM (recType == BS.pack [recordType]) ("TLS record type mismatch: expected " <> show recordType <> ", got " <> show recType)
     assertM (runGet getWord16be ver == kemTLSMcTinyVersion) ("TLS version mismatch: expected " <> show kemTLSMcTinyVersion <> ", got " <> show (runGet getWord16be ver))
@@ -58,12 +58,18 @@ sendTLSRecord ::
     , MonadIO m
     , MonadPlus m
     , Typeable a
+    , KnownNat (PacketSize a)
+    , HasCallStack
     ) =>
     Socket -> PacketPutContext a -> a -> TranscriptT m ()
 sendTLSRecord sock context record = do
     let recordType = 0x16 -- Handshake
     let version = kemTLSMcTinyVersion -- KEMTLS v1.0
     body <- putPacket @a context record
+    assertM
+        (LBS.length body == fromIntegral (natVal (Proxy @(PacketSize a))))
+        ("Packet size mismatch when sending TLS record of type " <> show (typeRep (Proxy :: Proxy a)) <> ": expected " <> show (natVal (Proxy @(PacketSize a))) <> ", got " <> show (LBS.length body))
+
     putStrLn $ "Recording packet of type: " <> show (typeRep (Proxy :: Proxy a))
     Transcript.recordMessage (fromLazy body)
     let len = fromIntegral (LBS.length body) :: Word16

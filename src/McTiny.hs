@@ -28,10 +28,6 @@ foreign import ccall safe "crypto_kem_mceliece6960119_enc"
 foreign import ccall safe "crypto_kem_mceliece6960119_dec"
     c_dec :: Ptr Word8 -> Ptr Word8 -> Ptr Word8 -> IO CInt
 
--- void mctiny_pk2block(unsigned char *out,const unsigned char *pk,int rowpos,int colpos)
-foreign import ccall safe "mctiny_pk2block"
-    c_pk2block :: Ptr Word8 -> Ptr Word8 -> CInt -> CInt -> IO ()
-
 -- int crypto_stream_xsalsa20_xor(unsigned char *,const unsigned char *,unsigned long long,const unsigned char *,const unsigned char *);
 foreign import ccall unsafe "bridge_crypto_stream_xsalsa20_xor"
     cs_xsalsa20_xor :: Ptr Word8 -> Ptr Word8 -> CULLong -> Ptr Word8 -> Ptr Word8 -> IO CInt
@@ -47,6 +43,10 @@ foreign import ccall safe "crypto_hash_shake256"
 -- void mctiny_pk2block(unsigned char *out,const unsigned char *pk,int rowpos,int colpos)
 foreign import ccall safe "mctiny_pk2block"
     c_mctiny_pk2block :: Ptr Word8 -> Ptr Word8 -> CInt -> CInt -> IO ()
+
+-- int mctiny_seedisvalid(const unsigned char *seed)
+foreign import ccall safe "mctiny_seedisvalid"
+    c_mctiny_seedisvalid :: Ptr Word8 -> IO CInt
 
 -- void mctiny_seed2e(unsigned char *e,const unsigned char *seed)
 foreign import ccall safe "mctiny_seed2e"
@@ -333,7 +333,13 @@ publicKeyToMcTinyBlock ::
 publicKeyToMcTinyBlock (McEliecePublicKey pkFPtr) rowPos colPos = do
     SizedBS.create $ \outPtr -> do
         withForeignPtr pkFPtr $ \pkPtr -> do
-            c_mctiny_pk2block outPtr pkPtr (fromIntegral rowPos) (fromIntegral colPos)
+            c_mctiny_pk2block outPtr pkPtr (fromIntegral (rowPos - 1)) (fromIntegral (colPos - 1))
+
+checkSeed :: SizedByteString CookieSeedBytes -> IO Bool
+checkSeed seedBS = do
+    SizedBS.useAsCString seedBS $ \seedPtr -> do
+        res <- c_mctiny_seedisvalid (castPtr seedPtr)
+        return (res /= 0)
 
 seedToE ::
     SizedByteString CookieSeedBytes ->

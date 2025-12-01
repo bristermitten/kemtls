@@ -1,8 +1,10 @@
 module ClientMain where
 
+import Assertions (assertM)
 import Client
 import Client.State
 import Constants
+import Data.Map.Strict qualified as Map
 import Data.Vector.Fixed qualified as Fixed
 import KEMTLS
 import McTiny
@@ -90,40 +92,41 @@ runPhase1 = do
     cookie <- gets cookie0
     nonce <- gets longTermNonce
 
-    for_ [1 .. mcTinyRowBlocks] $ \rowPos -> for_ [1 .. mcTinyColBlocks] $ \colPos -> do
-        block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
+    for_ [1 .. mcTinyRowBlocks] $ \rowPos ->
+        for_ [1 .. mcTinyColBlocks] $ \colPos -> do
+            block <- liftIO $ publicKeyToMcTinyBlock pk rowPos colPos
 
-        let packetNonce =
-                nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
+            let packetNonce =
+                    nonce `Nonce.withSuffix` Nonce.phase1C2SNonce rowPos colPos
 
-        let queryPacket =
-                Query1
-                    block
-                    packetNonce
-                    cookie
+            let queryPacket =
+                    Query1
+                        block
+                        packetNonce
+                        cookie
 
-        chts <- gets chts
-        sendPacketWithContext chts queryPacket
+            chts <- gets chts
+            sendPacketWithContext chts queryPacket
 
-        shts <- gets shts
-        receivedPacket <- readPacketWithContext @Reply1 shts
+            shts <- gets shts
+            receivedPacket <- readPacketWithContext @Reply1 shts
 
-        let reply1Nonce = r1Nonce receivedPacket
+            let reply1Nonce = r1Nonce receivedPacket
 
-        unless (Nonce.nonceSuffix reply1Nonce == Nonce.phase1S2CNonce rowPos colPos) $
-            error $
-                "Client Error: Invalid Reply Nonce for Block "
-                    <> show (rowPos, colPos)
+            unless (Nonce.nonceSuffix reply1Nonce == Nonce.phase1S2CNonce rowPos colPos) $
+                error $
+                    "Client Error: Invalid Reply Nonce for Block "
+                        <> show (rowPos, colPos)
 
-        modify
-            ( \case
-                p1@Phase1 {} ->
-                    p1
-                        { receivedBlocks =
-                            addBlock rowPos colPos (r1Cookie1 receivedPacket) (receivedBlocks p1)
-                        }
-                _ -> error "Invalid client state when storing Reply1 blocks."
-            )
+            modify
+                ( \case
+                    p1@Phase1 {} ->
+                        p1
+                            { receivedBlocks =
+                                addBlock rowPos colPos (r1Cookie1 receivedPacket) (receivedBlocks p1)
+                            }
+                    _ -> error "Invalid client state when storing Reply1 blocks."
+                )
     blocks <- gets receivedBlocks
     chts <- gets chts
     shts <- gets shts
@@ -134,6 +137,10 @@ runPhase2 :: SizedByteString CookieC0Bytes -> ClientM ()
 runPhase2 cookie0 = do
     putStrLn "Running Phase 2..."
     allCookies <- gets receivedBlocks
+    print $ Map.keys $ blocks allCookies
+    assertM
+        (length (ordNub $ Map.elems $ blocks allCookies) == mcTinyRowBlocks * mcTinyColBlocks)
+        "Client Error: Incomplete blocks received in Phase 1."
     chts <- gets chts
     shts <- gets shts
     for_ [1 .. ceiling (mcTinyRowBlocks / mctinyV)] $ \i -> do
@@ -169,6 +176,9 @@ runPhase3 = do
     liftIO $ putStrLn "Running Phase 3..."
 
     syndromesList <- gets syndromes
+    assertM
+        (length (ordNub syndromesList) == ceiling (mcTinyRowBlocks / mctinyV))
+        "Client Error: Incorrect number of syndromes collected in Phase 2."
     merged <- liftIO $ mergePieceSyndromes syndromesList
 
     chts <- gets chts
@@ -215,9 +225,15 @@ runFinishedPhase = do
     putStrLn $ "Derived fk_s: " <> show fk_s
     hmac <- getTranscriptHMAC fk_s
 
-    serverFinished <- readPacketWithContext @ServerFinished shts
+    print ("Client SHTS:", shts)
+    socket <- asks envSocket
+    serverFinished <- Protocol.recvTLSRecord @ServerFinished socket shts
 
     putStrLn $ "Received ServerFinished: " <> show serverFinished
+
+    assertM
+        (Nonce.nonceSuffix (sfNonce serverFinished) == Nonce.kemtlsNonceSuffix)
+        "Client Error: Invalid ServerFinished nonce suffix."
 
     let expectedHMAC = sfHMAC serverFinished
     putStrLn $ "Received HMAC: " <> show expectedHMAC
@@ -225,8 +241,4 @@ runFinishedPhase = do
     unless (hmac == expectedHMAC) $
         error "Client Error: ServerFinished HMAC does not match expected value!"
 
-{-
-("Client Shared Secrets:","Z\224/\224Tx6Q\231\205O\181YE\162\194L\182\f\241\156&'\GSu1\206ke\220\136\DC2","\SYNE]eE\DC2q\191X\251o\167J3\215&\177\&2$\171\vG\223o\164*\153\186f\139l\188")
-
-("Server Shared Secrets:","Z\224/\224Tx6Q\231\205O\181YE\162\194L\182\f\241\156&'\GSu1\206ke\220\136\DC2","BZS\r\EM\187\214@\151-\ACK\161\&9\226|_\254Z\n\tFnT4\192\\\199\139\224\128\t\241")
--}
+-- "\193\SI`\147\193hU\210F\167\151fz\a\161\132\136\187\DC2?\149F\231j\226\220\162c\220\207\229\169"

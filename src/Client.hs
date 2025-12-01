@@ -7,6 +7,7 @@ import Control.Exception qualified as E
 import McTiny
 import Network.Socket
 import Packet.Generic
+import Packet.McTiny (McTinyPacket)
 import Protocol
 import Transcript (TranscriptT, runTranscriptT)
 
@@ -46,7 +47,7 @@ runClient mhost port ss serverPK localKP initialState action = do
 
 readPacket ::
     forall a.
-    ( KEMTLSPacket a
+    ( McTinyPacket a
     , KnownNat (PacketSize a)
     , PacketGetContext a ~ SharedSecret
     ) =>
@@ -59,7 +60,7 @@ readPacket = do
 
 readPacketWithContext ::
     forall a.
-    ( KEMTLSPacket a
+    ( McTinyPacket a
     , KnownNat (PacketSize a)
     ) =>
     PacketGetContext a ->
@@ -69,7 +70,7 @@ readPacketWithContext context = do
     Protocol.recvPacket @a sock context
 
 sendPacket ::
-    ( KEMTLSPacket a
+    ( McTinyPacket a
     , KnownNat (PacketSize a)
     , PacketPutContext a ~ SharedSecret
     , HasCallStack
@@ -82,7 +83,7 @@ sendPacket packet = do
     liftIO $ Protocol.sendPacket sock secret packet
 
 sendPacketWithContext ::
-    ( KEMTLSPacket a
+    ( McTinyPacket a
     , KnownNat (PacketSize a)
     , HasCallStack
     ) =>

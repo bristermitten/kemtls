@@ -37,8 +37,8 @@ data ClientState
     = -- | waiting for ClientHello
       Initialised
     | -- | Reply 0 sent, receiving Query1s
-      SentReply0 SharedSecret
-    | SentReply1 SharedSecret
-    | Phase3 SharedSecret
+      SentReply0 {ss_s :: SharedSecret}
+    | SentReply1 {ss_s :: SharedSecret}
+    | Phase3 {ss_s :: SharedSecret}
     | Completed {ss_s :: SharedSecret, ss_e :: SharedSecret}
     deriving stock (Show)

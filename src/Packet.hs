@@ -15,6 +15,7 @@ import GHC.TypeLits (type (*), type (+))
 import McTiny (SharedSecret, decryptPacketData, encryptPacketData)
 import Nonce
 import Packet.Generic
+import Packet.McTiny (McTinyPacket)
 import SizedByteString as SizedBS
 import Prelude hiding (ByteString, put, (||))
 
@@ -27,6 +28,8 @@ data Query1
     , q1Cookie0 :: SizedByteString CookieC0Bytes
     }
     deriving stock (Show)
+
+instance McTinyPacket Query1
 
 instance KEMTLSPacket Query1 where
     type PacketSize Query1 = Query1Bytes
@@ -65,6 +68,8 @@ data Reply1 = Reply1
 
 type NonceM = Nonce "M"
 
+instance McTinyPacket Reply1
+
 instance KEMTLSPacket Reply1 where
     type PacketSize Reply1 = Reply1Bytes
     type PacketPutContext Reply1 = SharedSecret
@@ -102,6 +107,8 @@ data Query2 = Query2
     , query2Nonce :: NonceN
     }
     deriving stock (Show)
+
+instance McTinyPacket Query2
 
 -- 2D grid of cookies C_i,j
 -- contains mctinyV (7) rows and mcTinyColBlocks (8) columns
@@ -169,6 +176,8 @@ data Reply2 = Reply2
     }
     deriving stock (Show)
 
+instance McTinyPacket Reply2
+
 instance KEMTLSPacket Reply2 where
     type PacketSize Reply2 = Reply2Bytes
     type PacketPutContext Reply2 = SharedSecret
@@ -209,6 +218,8 @@ data Query3 = Query3
     }
     deriving stock (Show)
 
+instance McTinyPacket Query3
+
 instance KEMTLSPacket Query3 where
     type PacketSize Query3 = Query3Bytes
     type PacketPutContext Query3 = SharedSecret
@@ -248,6 +259,8 @@ data Reply3 = Reply3
     -- ^ packet nonce M, 255, 255
     }
     deriving stock (Show)
+
+instance McTinyPacket Reply3
 
 instance KEMTLSPacket Reply3 where
     type PacketSize Reply3 = Reply3Bytes
