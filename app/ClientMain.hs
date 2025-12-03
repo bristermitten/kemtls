@@ -138,7 +138,6 @@ runPhase2 :: SizedByteString CookieC0Bytes -> ClientM ()
 runPhase2 cookie0 = do
     putStrLn "Running Phase 2..."
     allCookies <- gets receivedBlocks
-    print $ Map.keys $ blocks allCookies
     assertM
         (length (ordNub $ Map.elems $ blocks allCookies) == mcTinyRowBlocks * mcTinyColBlocks)
         "Client Error: Incomplete blocks received in Phase 1."
@@ -203,6 +202,7 @@ runPhase3 = do
         "Client Error: Invalid Reply3 nonce suffix."
 
     sk <- (.secretKey) <$> asks localKeypair
+
     _Z <- liftIO $ decap sk (reply.reply3MergedPieces || reply.reply3C)
     putStrLn "Handshake Phase 3 Complete. Shared secret established."
     print _Z
