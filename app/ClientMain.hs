@@ -23,6 +23,8 @@ import Prelude hiding ((||))
 -- | Start the KEMTLS client
 main :: IO ()
 main = do
+    hSetBuffering stdout LineBuffering
+    hSetBuffering stderr LineBuffering
     keypair <- generateKeypair
     -- load server's public key
     serverPK <- readPublicKey pathToServerPublicKey

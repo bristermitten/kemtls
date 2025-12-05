@@ -6,7 +6,9 @@ import Server (kemtlsServer)
 
 main :: IO ()
 main = do
+    hSetBuffering stdout LineBuffering
+    hSetBuffering stderr LineBuffering
     serverSK <- readSecretKey pathToServerSecretKey
     putStrLn $ "Loaded server secret key from " <> pathToServerSecretKey
 
-    kemtlsServer (Just "127.0.0.1") "4433" serverSK
+    kemtlsServer (Just "0.0.0.0") "4433" serverSK
