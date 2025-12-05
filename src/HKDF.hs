@@ -12,14 +12,6 @@ import Transcript
 
 type HKDFHashAlgorithm = SHA256
 
-{-
-	// CAHTS <- HKDF.Expand(AHS, "c ahs traffic", CH..CKC)
-	clientSecret := hs.suite.deriveSecret(ahs,
-		clientAuthenticatedHandshakeTrafficLabel, hs.transcript)
-
-func (c *cipherSuiteTLS13) deriveSecret(secret []byte, label string, transcript hash.Hash) []byte {
--}
-
 {- | HKDF-expand that implements
 Derive-Secret from RFC 8446, Section 7.1:
 
@@ -67,6 +59,7 @@ expandLabel prk label contextStr = do
     let okm = HKDF.expand prk (fromLazy realLabel) hashLength
     okm
 
+-- | Like 'expandLabel', but uses the current transcript hash as context
 expandLabelWithCurrentTranscript ::
     forall out m.
     (BA.ByteArray out, Monad m) =>

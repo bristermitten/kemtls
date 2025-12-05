@@ -1,6 +1,7 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE DeriveAnyClass #-}
 
+-- | Definition of protocol operations for (KEM)TLS
 module Protocol.TLS where
 
 import Assertions (assertM)
@@ -19,10 +20,16 @@ import Protocol (recvExact)
 import Transcript (TranscriptT)
 import Transcript qualified
 
-data KEMTLSException = ConnectionClosed
+-- | Exception thrown on KEMTLS protocol errors
+data KEMTLSException
+    = -- | Connection closed unexpectedly
+      ConnectionClosed
     deriving stock (Show)
     deriving anyclass (Exception)
 
+{- | Receive a TLS record of the given type
+Handles TLS record header parsing and verification, transcripts, etc
+-}
 recvTLSRecord ::
     forall a m.
     ( MonadIO m
@@ -61,6 +68,9 @@ recvTLSRecord sock context = do
     Transcript.recordMessage (fromLazy recordData)
     getPacket @a context recordData
 
+{- | Send a TLS record of the given type
+Handles TLS record header construction, transcripts, etc
+-}
 sendTLSRecord ::
     forall a m.
     ( TLSRecord a

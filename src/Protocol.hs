@@ -8,6 +8,7 @@ import Network.Socket.ByteString.Lazy
 import Packet.Generic
 import Packet.McTiny (McTinyPacket)
 
+-- | Common function used to receive a McTiny packet from a socket, verifying its size
 recvPacket ::
     forall a m.
     (McTinyPacket a, KnownNat (PacketSize a), MonadIO m, HasCallStack) =>
@@ -30,6 +31,7 @@ recvPacket sock secret = do
         else
             liftIO $ getPacket @a secret packetData
 
+-- | Common function used to send a McTiny packet over a socket, verifying its size
 sendPacket ::
     forall a.
     (McTinyPacket a, HasCallStack, KnownNat (PacketSize a), HasCallStack) =>
@@ -45,6 +47,7 @@ sendPacket sock secret packet = do
                 <> " bytes."
     sendAll sock packetData
 
+-- | Receive an exact number of bytes from a socket, throwing an error if we get EOF before that
 recvExact :: (MonadIO m, HasCallStack) => Socket -> Int64 -> m LBS.ByteString
 recvExact sock n = liftIO $ go n
     where

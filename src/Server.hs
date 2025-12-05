@@ -1,3 +1,10 @@
+{- | Main server logic for handling KEMTLS connections using McTiny KEM.
+There's a bit of an inconsistency between the Server/Client code, as while most of the real server logic in this file,
+most of the real client logic is in app/ClientMain.hs. There is no good reason for this, but refactoring it would take too much work (sorry).
+
+This module sets up a TCP server which listens for incoming connections, performs the KEMTLS handshake using McTiny,
+and then echoes back any application data received from the client.
+-}
 module Server where
 
 import Control.Concurrent (forkFinally, modifyMVar_)
@@ -8,7 +15,6 @@ import Constants
 import Control.Exception.Context qualified as E
 import Control.Monad.Except (throwError)
 import Cookie
-import Data.ByteString qualified as BS
 import Data.Vector.Fixed qualified as Fixed
 import KEMTLS
 import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, finalizeMcTiny, mctinyHash, seedToE)
@@ -26,10 +32,20 @@ import SizedByteString as SizedBS
 import Transcript (TranscriptT, getTranscriptHMAC, runTranscriptT)
 import Prelude hiding ((||))
 
+{- | The server environment, containing the global server state.
+We use an MVar because multiple connections will be handled concurrently.
+-}
 type ServerEnv = MVar ServerState
+
+-- | The monad in which connection handling runs.
 type ConnectionM = TranscriptT (ReaderT ServerEnv (StateT ClientInfo IO))
 
-kemtlsServer :: Maybe HostName -> ServiceName -> McElieceSecretKey -> IO ()
+-- | Start a KEMTLS server on the given host and port, using the provided McEliece secret key.
+kemtlsServer ::
+    Maybe HostName -> -- Host to listen on, Nothing means bind to all interfaces
+    ServiceName -> -- Port to listen on
+    McElieceSecretKey -> -- Server's McEliece secret key
+    IO ()
 kemtlsServer mhost port serverSecretKey = do
     addr <- resolve
     cookieKey <- randomSized @32
@@ -86,6 +102,7 @@ kemtlsServer mhost port serverSecretKey = do
                         cleanupClient stateVar cid conn
                     )
 
+-- | Create a new client info record with the given client ID and socket.
 newClient :: Int -> Socket -> ClientInfo
 newClient cid sock =
     ClientInfo
@@ -95,6 +112,7 @@ newClient cid sock =
         , clientCookieMemory = emptyClientCookies
         }
 
+-- | Add a new client to the state's list of connected clients.
 registerClient :: ConnectionM ()
 registerClient = do
     stateVar <- ask
@@ -105,10 +123,12 @@ registerClient = do
         putStrLn $ "Client registered. Clients connected: " <> show (length newClients)
         return $ st {connectedClients = newClients}
 
+-- | Update the current client's state.
 setClientState :: (MonadTrans t, MonadState ClientInfo m) => ClientState -> t m ()
 setClientState newState = do
     lift $ modify $ \c -> c {clientState = newState}
 
+-- | Clean up after a client disconnects.
 cleanupClient :: MVar ServerState -> Int -> Socket -> IO ()
 cleanupClient stateVar cid sock = do
     close sock
@@ -117,16 +137,20 @@ cleanupClient stateVar cid sock = do
         putStrLn $ "Client disconnected. Clients connected: " <> show (length remainingClients)
         return $ st {connectedClients = remainingClients}
 
+-- | Main connection handler, called when a new client connects.
 handleConnection :: ConnectionM ()
 handleConnection = do
     registerClient
 
-    result <- runExceptT handshakeLoop
-
+    result <- runExceptT handshakeLoop -- run the handshake loop
     case result of
         Left err -> liftIO $ putTextLn $ "Client Error: " <> err
         Right _ -> liftIO $ putTextLn "Client Finished successfully."
 
+{- | Main packet handler loop
+Loops, processing packets according to the current client state
+until the connection is closed or an error occurs.
+-}
 handshakeLoop :: (HasCallStack) => ExceptT Text ConnectionM ()
 handshakeLoop = do
     client <- lift Prelude.get
@@ -136,15 +160,15 @@ handshakeLoop = do
             putStrLn "Waiting for ClientHello..."
             processClientHello
             handshakeLoop
-        SentReply0 {} -> do
+        McTinyPhase1 {} -> do
             putStrLn "Waiting for Query1..."
             processQuery1
             handshakeLoop
-        SentReply1 {} -> do
+        McTinyPhase2 {} -> do
             putStrLn "Waiting for Query2..."
             processQuery2
             handshakeLoop
-        Phase3 {} -> do
+        McTinyPhase3 {} -> do
             putStrLn "Waiting for Query3..."
             processQuery3
             handshakeLoop
@@ -188,14 +212,14 @@ processClientHello = do
     lift $ Protocol.sendTLSRecord conn ss_s reply
     putStrLn "Sent ServerHello."
 
-    lift $ setClientState (SentReply0 ss_s)
+    lift $ setClientState (McTinyPhase1 ss_s)
 
 processQuery1 :: ExceptT Text ConnectionM ()
 processQuery1 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
     let ss_s = case clientState client of
-            SentReply0 secret -> secret
+            McTinyPhase1 secret -> secret
             _ -> error "Invalid client state in processQuery1"
 
     (chts, shts) <- lift $ deriveHandshakeSecret ss_s
@@ -237,14 +261,14 @@ processQuery1 = do
                         }
             liftIO $ sendPacket client shts reply
     putStrLn "Completed processing Query1."
-    setClientState (SentReply1 ss_s)
+    setClientState (McTinyPhase2 ss_s)
 
 processQuery2 :: (HasCallStack) => ExceptT Text ConnectionM ()
 processQuery2 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
     let ss_s = case clientState client of
-            SentReply1 secret -> secret
+            McTinyPhase2 secret -> secret
             _ -> error "Invalid client state in processQuery1"
 
     (chts, shts) <- lift $ deriveHandshakeSecret ss_s
@@ -294,14 +318,14 @@ processQuery2 = do
                     , r2Nonce = nonceM `Nonce.withSuffix` Nonce.phase2S2CNonce piecePos
                     }
 
-    setClientState (Phase3 ss_s)
+    setClientState (McTinyPhase3 ss_s)
 
 processQuery3 :: ExceptT Text ConnectionM ()
 processQuery3 = do
     client <- lift (lift Prelude.get)
     let conn = clientSocket client
     let ss = case clientState client of
-            Phase3 secret -> secret
+            McTinyPhase3 secret -> secret
             _ -> error "Invalid client state in processQuery3"
     (chts, shts) <- lift $ deriveHandshakeSecret ss
 

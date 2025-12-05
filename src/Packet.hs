@@ -20,7 +20,10 @@ import SizedByteString as SizedBS
 import Prelude hiding (ByteString, put, (||))
 
 type NonceR = Nonce "R"
+type NonceN = Nonce "N"
+type NonceM = Nonce "M"
 
+-- | The Client to Server packet sent in McTiny Phase 1
 data Query1
     = Query1
     { q1Block :: SizedByteString McTinyBlockBytes -- 1kb chunk of the public key
@@ -57,16 +60,14 @@ instance KEMTLSPacket Query1 where
                 , q1Nonce = nonce
                 , q1Cookie0 = cookie
                 }
-type NonceN = Nonce "N"
 
+-- | The Server to Client packet sent in McTiny Phase 1
 data Reply1 = Reply1
     { r1Cookie0 :: SizedByteString CookieC0Bytes
     , r1Cookie1 :: SizedByteString Cookie1BlockBytes
     , r1Nonce :: NonceM
     }
     deriving stock (Show)
-
-type NonceM = Nonce "M"
 
 instance McTinyPacket Reply1
 
@@ -101,10 +102,14 @@ instance KEMTLSPacket Reply1 where
                 , r1Nonce = nonce
                 }
 
+-- | The Client to Server packet sent in McTiny Phase 2
 data Query2 = Query2
     { query2Cookies :: Query2CookieGrid
+    -- ^ 2D grid of cookies C_i,j
     , query2Cookie0 :: SizedByteString CookieC0Bytes
+    -- ^ cookie C_0
     , query2Nonce :: NonceN
+    -- ^ packet nonce N
     }
     deriving stock (Show)
 
@@ -169,10 +174,14 @@ instance KEMTLSPacket Query2 where
                 let (h, t) = Prelude.splitAt n xs
                  in h : chunksOf n t
 
+-- | The Server to Client packet sent in McTiny Phase 2
 data Reply2 = Reply2
     { r2Cookie0 :: SizedByteString CookieC0Bytes
+    -- ^ cookie C_0
     , r2Syndrome2 :: SizedByteString McTinyPieceBytes
+    -- ^ syndrome pieces c_j
     , r2Nonce :: NonceM
+    -- ^ packet nonce M
     }
     deriving stock (Show)
 
@@ -211,10 +220,14 @@ instance KEMTLSPacket Reply2 where
                 , r2Nonce = nonce
                 }
 
+-- | The Client to Server packet sent in McTiny Phase 3
 data Query3 = Query3
     { query3MergedPieces :: SizedByteString McTinyColBytes
+    -- ^ merged pieces c_1, ..., c_r
     , query3Nonce :: NonceN
+    -- ^ packet nonce N
     , query3Cookie0 :: SizedByteString CookieC0Bytes
+    -- ^ cookie C_0
     }
     deriving stock (Show)
 
@@ -248,6 +261,7 @@ instance KEMTLSPacket Query3 where
                 , query3Cookie0 = cookie0
                 }
 
+-- | The Server to Client packet sent in McTiny Phase 3
 data Reply3 = Reply3
     { reply3C_z :: SizedByteString Cookie9Bytes
     -- ^ cookie C_z

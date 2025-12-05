@@ -5,10 +5,14 @@ import McTiny
 import Network.Socket
 import SizedByteString (SizedByteString)
 
+-- | Main server state
 data ServerState = ServerState
     { connectedClients :: [ClientInfo]
+    -- ^ List of connected clients
     , serverSecretKey :: McElieceSecretKey
-    , cookieSecretKey :: SizedByteString CookieSecretKeyBytes -- Ephemeral key for cookie encryption
+    -- ^ Long-term server secret key
+    , cookieSecretKey :: SizedByteString CookieSecretKeyBytes
+    -- ^ Ephemeral key for cookie encryption
     }
 
 data ClientInfo = ClientInfo
@@ -19,6 +23,7 @@ data ClientInfo = ClientInfo
     -- ^ Stores client cookies. Max size of 8 entries.
     }
 
+-- | Stores cookies for a client. If we did cookie cycling this would be used.
 data ClientCookies = ClientCookies
     { cookieMap :: IntMap ClientCookie
     , activeCookieId :: Int
@@ -34,12 +39,16 @@ data ClientCookie = ClientCookie
     }
 
 data ClientState
-    = -- | waiting for ClientHello
+    = -- | fresh connection, waiting for ClientHello to be sent
       Initialised
     | -- | Reply 0 sent, receiving Query1s
-      SentReply0 {ss_s :: SharedSecret}
-    | SentReply1 {ss_s :: SharedSecret}
-    | Phase3 {ss_s :: SharedSecret}
-    | Completed {ss_s :: SharedSecret, ss_e :: SharedSecret}
-    | ExchangingData {ss_s :: SharedSecret, ss_e :: SharedSecret}
+      McTinyPhase1 {ss_s :: SharedSecret}
+    | -- | Reply 1 sent, receiving Query2s
+      McTinyPhase2 {ss_s :: SharedSecret}
+    | -- | Reply 2 sent, receiving Query3
+      McTinyPhase3 {ss_s :: SharedSecret}
+    | -- | McTiny handshake complete, finishing TLS handshake
+      Completed {ss_s :: SharedSecret, ss_e :: SharedSecret}
+    | -- | KEMTLS handshake complete, exchanging data
+      ExchangingData {ss_s :: SharedSecret, ss_e :: SharedSecret}
     deriving stock (Show)

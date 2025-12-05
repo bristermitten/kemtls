@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
+-- | Library module for the KEMTLS client
 module Client where
 
 import Client.State
@@ -14,21 +15,33 @@ import Transcript (TranscriptT, runTranscriptT)
 -- | Read-only environment for the KEMTLS client
 data ClientEnv = ClientEnv
     { envSocket :: Socket
-    , envSharedSecret :: SharedSecret -- the result of ENC(pk), i.e. S or ss_s
+    -- ^ Connected TCP socket
+    , envSharedSecret :: SharedSecret
+    -- ^ the result of ENC(pk), i.e. S or ss_s
     , envServerPublicKey :: McEliecePublicKey
+    -- ^ Server's public key K
     , localKeypair :: McElieceKeypair
     -- ^ Client's keypair (k, K)
     }
 
+-- | Monad stack for the KEMTLS client
 type ClientM a = TranscriptT (ReaderT ClientEnv (StateT ClientState IO)) a
 
+-- | Run a KEMTLS client action
 runClient ::
+    -- | Server hostname (Nothing for localhost)
     Maybe HostName ->
+    -- | Server port
     ServiceName ->
+    -- | Shared static secret established via KEM
     SharedSecret ->
+    -- | Server's public key
     McEliecePublicKey ->
+    -- | Client's keypair
     McElieceKeypair ->
+    -- | Initial client state
     ClientState ->
+    -- | Client action to run
     ClientM a ->
     IO a
 runClient mhost port ss serverPK localKP initialState action = do
@@ -45,6 +58,7 @@ runClient mhost port ss serverPK localKP initialState action = do
             connect sock $ addrAddress addr
             return sock
 
+-- | Utility to read a McTiny packet from the server
 readPacket ::
     forall a.
     ( McTinyPacket a
@@ -58,6 +72,7 @@ readPacket = do
 
     Protocol.recvPacket @a sock secret
 
+-- | Utility to read a McTiny packet from the server with a non-default context
 readPacketWithContext ::
     forall a.
     ( McTinyPacket a
@@ -69,6 +84,7 @@ readPacketWithContext context = do
     sock <- asks envSocket
     Protocol.recvPacket @a sock context
 
+-- | Utility to send a McTiny packet to the server
 sendPacket ::
     ( McTinyPacket a
     , KnownNat (PacketSize a)
@@ -82,6 +98,7 @@ sendPacket packet = do
 
     liftIO $ Protocol.sendPacket sock secret packet
 
+-- | Utility to send a McTiny packet to the server with a non-default context
 sendPacketWithContext ::
     ( McTinyPacket a
     , KnownNat (PacketSize a)

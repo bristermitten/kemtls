@@ -11,19 +11,24 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+{- | This modules defines a 'SizedByteString' type, which is a byte string associated with a type level
+natural number representing its length. As most of the strings we use are of fixed length, this allows us to
+catch length errors at compile time.
+
+Most of this code is a bit of a mess and probably not too important to read in detail.
+-}
 module SizedByteString where
 
 import Crypto.Random (MonadRandom, getRandomBytes)
 import Data.Binary (Binary)
 import Data.Binary.Get (Get, getByteString)
 import Data.Binary.Put (Put, putByteString)
-import Data.ByteArray (ByteArrayAccess)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal qualified as BS (create, createUptoN')
 import Data.ByteString.Lazy qualified as LBS
 import Data.ByteString.Short qualified as SBS
 import Data.Type.Ord (type (<), type (<=))
-import Foreign (Ptr, callocBytes, fillBytes)
+import Foreign (Ptr, fillBytes)
 import Foreign.C (CString)
 import GHC.TypeLits (Div, Mod, type (+), type (-))
 

@@ -1,3 +1,4 @@
+-- | Handles creation and decoding of McTiny cookies
 module Cookie where
 
 import Constants

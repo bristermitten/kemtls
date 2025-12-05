@@ -20,6 +20,7 @@ import SizedByteString qualified as SizedBS
 import Transcript (getTranscriptHMAC)
 import Prelude hiding ((||))
 
+-- | Start the KEMTLS client
 main :: IO ()
 main = do
     keypair <- generateKeypair
@@ -27,7 +28,7 @@ main = do
     serverPK <- readPublicKey pathToServerPublicKey
     putStrLn $ "Loaded server public key from " <> pathToServerPublicKey
 
-    -- encapsulate a shared secret
+    -- encapsulate the static public key to get ciphertext and shared secret (ss_S)
     (ct, ss) <- encapsulate serverPK
     putStrLn $ "Ciphertext: " <> show ct
     putStrLn $ "Shared Secret: " <> show ss
@@ -38,6 +39,7 @@ main = do
         putStrLn "Starting KEMTLS client Phase 0..."
         runClientHello
 
+-- | Run the ClientHello and process ServerHello
 runClientHello :: ClientM ()
 runClientHello = do
     putStrLn "Sending ClientHello..."
@@ -84,6 +86,7 @@ runClientHello = do
     putStrLn "Continuing McTiny as usual..."
     runPhase1 -- skip phase 0
 
+-- | Run McTiny Phase 1 and transition to Phase 2
 runPhase1 :: ClientM ()
 runPhase1 = do
     -- Placeholder for Phase 1 implementation
@@ -134,6 +137,7 @@ runPhase1 = do
     put (Phase2 cookie nonce blocks [] chts shts)
     runPhase2 cookie
 
+-- | Run McTiny Phase 2 and transition to Phase 3
 runPhase2 :: SizedByteString CookieC0Bytes -> ClientM ()
 runPhase2 cookie0 = do
     putStrLn "Running Phase 2..."
@@ -171,6 +175,7 @@ runPhase2 cookie0 = do
     putStrLn "Handshake Phase 2 Complete."
     runPhase3
 
+-- | Run McTiny Phase 3 and transition to Finished phase
 runPhase3 :: ClientM ()
 runPhase3 = do
     liftIO $ putStrLn "Running Phase 3..."
@@ -217,6 +222,9 @@ runPhase3 = do
         )
     runFinishedPhase
 
+{- | Run the Finished phase of the KEMTLS handshake, verifying ServerFinished and sending ClientFinished
+Also sends a test application data packet after handshake completion
+-}
 runFinishedPhase :: ClientM ()
 runFinishedPhase = do
     putStrLn "Running Finished Phase..."

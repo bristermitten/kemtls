@@ -1,6 +1,10 @@
 {-# LANGUAGE RequiredTypeArguments #-}
 {-# LANGUAGE TypeAbstractions #-}
 
+{- | Wrapper types around Nonce values.
+These are tagged with a type-level string tag to distinguish their usage in different protocol phases.
+The tags used should match those described in the McTiny paper (eg R, M, N, etc).
+-}
 module Nonce where
 
 import Constants (NonceRandomPartBytes, PacketNonceBytes)
@@ -11,26 +15,34 @@ import GHC.TypeLits
 import SizedByteString (SizedByteString (..), SizedString (unsafeMkSized), appendSized, toStrictBS)
 import SizedByteString qualified as SizedBS
 
+{- | The random part of a Nonce, tagged with a type-level string.
+Wraps a SizedByteString of length NonceRandomPartBytes.
+-}
 newtype NonceRandomPart (tag :: Symbol) = NonceRandomPart
     { getNonceRandomPart :: SizedByteString NonceRandomPartBytes
     }
     deriving stock (Eq, Show)
 
+-- | A Nonce, consisting of a random part and a non-random suffix.
 data Nonce (tag :: Symbol) = Nonce
     { randomPart :: NonceRandomPart tag
     , nonceSuffix :: SizedByteString 2
     }
     deriving stock (Eq, Show)
 
+-- | Get the full Nonce as a SizedByteString of length PacketNonceBytes
 fullNonce :: Nonce tag -> SizedByteString PacketNonceBytes
 fullNonce (Nonce r s) = getNonceRandomPart r `appendSized` s
 
+-- | Create a new Nonce by replacing the suffix of an existing Nonce
 withSuffix :: NonceRandomPart tag -> SizedByteString 2 -> Nonce tag
 withSuffix = Nonce
 
+-- | Create a new Nonce by replacing the suffix of an existing Nonce
 withNewSuffix :: Nonce tag -> SizedByteString 2 -> Nonce tag
 withNewSuffix (Nonce r _) = Nonce r
 
+-- | Parse a SizedByteString of length PacketNonceBytes into a Nonce
 parseNonce :: SizedByteString PacketNonceBytes -> Nonce tag
 parseNonce bs =
     let (r, s) = SizedBS.splitAt @NonceRandomPartBytes bs

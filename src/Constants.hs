@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 
+-- | All our constants
 module Constants where
 
 import GHC.TypeLits (type (+))
@@ -20,7 +21,7 @@ skBytes :: Int
 skBytes = secret_key_bytes
 
 -- #crypto_kem_mceliece6960119_CIPHERTEXTBYTES
-#define ciphertext_bytes 226    
+#define ciphertext_bytes 226
 ciphertextBytes :: Int
 ciphertextBytes = ciphertext_bytes
 
