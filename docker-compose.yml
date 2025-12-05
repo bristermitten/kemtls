@@ -1,0 +1,39 @@
+services:
+  # Service 1: Generates the keys
+  init:
+    build: .
+    container_name: mctiny-init
+    command: initialise
+    volumes:
+      - ./state:/app/state
+    working_dir: /app
+
+
+  server:
+    build: .
+    container_name: mctiny-server
+    command: server
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - ./state:/app/state
+    ports:
+      - "4433:4433"
+    networks:
+      - mctiny-net
+
+  client:
+    build: .
+    container_name: mctiny-client
+    # delay start slightly to ensure server socket is open
+    command: sh -c "sleep 2 && client"
+    depends_on:
+      - server
+    volumes:
+      - ./state:/app/state
+    networks:
+      - mctiny-net
+
+networks:
+  mctiny-net:

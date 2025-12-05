@@ -1,4 +1,8 @@
-# KEMTLS with McTiny
+# KEMTLS with McTiny
+Coursework for COMSM0042 Advanced Cryptology, University of Bristol
+
+GitHub Repository: [github.com/bristermitten/kemtls](https://github.com/bristermitten/kemtls)
+
 
 ## Task
 
@@ -54,7 +58,46 @@ For clarity, here are some of the synonymous names used
 - To simplify the implementation we only support pre-distributed keys, which McTiny also assumes
   - adding support for certificates would be possible but is out of scope of this proof-of-concept
 
-**AEAD**: While TLS tends to use AES-GCM or CHACHA, we will use XSalsa20 + Poly1305 as in McTiny for consistency. All KEMTLS messages sent under this scheme reuse the McTiny nonce system of $[N/M] || a || b$. Specifically, it uses the suffix $0xFFFE$, as this doesn't clash with any other nonces used in McTiny as far as I can tell. Since TLS packets are already identified by their record headers, we can safely reuse nonces like this.
+**AEAD**: While TLS tends to use AES-GCM or CHACHA, we will use XSalsa20 + Poly1305 as in McTiny for consistency. All KEMTLS messages sent under this scheme reuse the McTiny nonce system of $[N/M] || a || b$. Specifically, it uses the suffix $0xFFFE$, as this doesn't clash with any other nonces used in McTiny as far as I can tell. Since TLS packets are already identified by their record headers, we can safely reuse nonces like this. This means that `[Client/Server]Random` are replaced with `[Client/Server]Nonce`. 
+
+### Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+
+    Note right of S: $$(sk, pk) \leftarrow Gen()$$
+
+    Note over C, S: McTiny Phase 0 + KEMTLS ClientHello
+
+    Note over C: $$(k, K) \leftarrow Gen()$$
+    Note over C: $$(ct_s, ss_s) \leftarrow ENC(pk)$$
+    Note over C: $$R \leftarrow Nonce()$$
+                  
+
+    C->>S: ClientHello[$$ct_s$$, ClientNonce (R)]
+
+    Note over S: $$ss_s \leftarrow DEC(sk, ct_s)$$
+    Note over S: Derive keys from $$ss_s$$
+    Note over S: Generate Nonce, Seed, Cookie as per McTiny spec
+
+    S->>C: ServerHello[$$C_0$$, ServerNonce (N)]
+
+    Note over C, S: Derive keys "c hs traffic" and "s hs traffic" from $$ss_s$$
+    Note over C, S: McTiny Phase 1-3 proceeds as normal using derived keys
+
+    Note over C, S: Derive application traffic keys from $$ss_s, ss_e$$
+
+    S->>C: ServerFinished (encrypted with SHTS, includes HMAC)
+    Note left of C: Verify HMAC
+    C->>S: ClientFinished (encrypted with CHTS, includes HMAC)
+    Note right of S: Verify HMAC
+
+    Note over C, S: Application Data encrypted with application traffic keys
+
+    Note over C, S: Handshake Complete!
+```
 
 ## Downgrade Resilience
 
@@ -74,9 +117,29 @@ The goal of the handshake is to avoid downgrade attacks, which could only be per
 
 ### Development Setup
 
-The easies way to run the code is to use `nix`. If you have nix installed, you should simply be able to run `nix develop` to enter a development shell that "just works".
+The easiest way to verify the implementation is with the provided Docker Compose setup. This builds the project in a Linux container and runs both the server and client, setting up all necessary dependencies automatically.
 
-Otherwise, a docker image is provided. `docker run .` should 
+```bash
+mkdir state
+
+docker-compose up --build
+```
+
+This should show logs of the `init`, `server`, and `client` services. The `init` service runs first to generate the server static keypair, which is saved to the `state/` directory on the host machine. The server then starts up, loading the static keypair from disk, and finally the client connects to the server and performs the KEMTLS handshake.
+
+#### Manual Setup
+Alternatively, you can build and run the project manually. This requires having GHC and Cabal installed, along with a C compiler for building the McTiny C library. I can't guarantee this will work on all platforms, but it should work on Linux and macOS.
+
+```bash
+# build the mctiny C library
+cd mctiny
+make
+cd ..
+
+# build the Haskell project
+cabal build
+```
+
 
 ### Executables
 
@@ -104,6 +167,8 @@ Modules of particular note:
 - `Packet/TLS.hs` - KEMTLS packet definitions and encoding/decoding logic
 - `Packet/Generic.hs` - abstraction over packets
 
+
+
 ### McTiny C Library
 
 The pre-written McTiny C library caused some issues during the initial stage of development. It delegated much of its crypto implementation to the SUPERCOP library, which provides highly optimised implementations of various post-quantum algorithms. As this often included assembly macros, it was not compatible with all platforms, notably ARM Macs. 
@@ -112,16 +177,32 @@ The solution to this involved modifying the library and replacing the SUPERCOP c
 
 These modifications were tested by running the McTiny test executable along with the McTiny client/server executables to ensure that the functionality remained intact.
 
-Due to a minor incompatibility between the two libraries, these changes subtly broke the client/server implementation, causing packets to be incorrectly formed by the client. As my library delegates to some of the McTiny library, this also causes my implementation to break in a similarly subtle way. Fixing this broke the test executable. Rather than spend (any more) hours trying to debug this, this is left as-is as an acceptable compromise for this proof-of-concept implementation. (If you're curious, the issue seems to be that PQClean's headers for length constants differ slightly. Specifically, `crypto_kem_mceliece6960119_CIPHERTEXTBYTES` seems to sometimes be expected to be 194, the length of the pure ciphertext, and sometimes 226, the length of the pure ciphertext + the authentication header) 
+Due to a minor incompatibility between the two libraries, these changes subtly broke the client/server implementation, causing packets to be incorrectly formed by the client. As my library delegates to some of the McTiny library, this also causes my implementation to break in a similarly subtle way. Fixing this broke the test executable. Rather than spend (any more) hours trying to debug this, this is left as-is as an acceptable compromise for this proof-of-concept implementation. (If you're curious, the issue seems to be that PQClean's headers for length constants differ slightly. Specifically, `crypto_kem_mceliece6960119_CIPHERTEXTBYTES` seems to sometimes be expected to be 194, the length of the pure ciphertext, and sometimes 226, the length of the pure ciphertext + the authentication header).
+
+To be explicit, this does not affect our implementation. This section is only included as a note of a development challenge. 
 
 This modified version of the McTiny library is included in the `mctiny/` directory.
 
 
 ## Limitations
 
-As previously mentioned, the McTiny implementation does not do cookie expiry/refresh. If we were using UDP, this might mean the server is vulnerable to replay attacks. However, since we use TCP, we do not need to design with packet loss or reordering in mind, and thus the server only accepts packets in the expected order. This means that replayed packets will be either ignored or rejected. 
+### Cookies 
+As previously mentioned, the McTiny implementation does not do cookie rotation. If we were using UDP, this might mean the server is vulnerable to replay attacks. However, since we use TCP, we do not need to design with packet loss or reordering in mind, and thus the server only accepts packets in the expected order. This means that replayed packets will be either ignored or rejected. 
 
+
+### Pre-distributed Keys
 The biggest limitation of this implementation is that it only supports pre-distributed keys. Adding support for certificates would be likely require significant changes to the McTiny protocol, as the certificate would need to be sent and verified before the McTiny flow begins. Classic McEliece cannot be used for signatures, so a separate signature scheme would need to be used. This is out of scope for this proof-of-concept implementation.
+
+### Limited TLS Implementation
+
+The bare minimum of TLS functionality and packets (ClientHello, ServerHello, ServerFinished, ClientFinished, Application Data) are implemented. A more reliable implementation would include McTiny in its supported cipher suites message, and implement this McTiny + KEMTLS as a proper TLS extension.
+
+### Reducing Round Trips and Packet Sizes
+
+While we merge the ClientHello with McTiny Phase 0, there is potential room for further improvements. The size of a public key fragment could be increased thanks to the guarantee of reliable delivery provided by TCP, reducing the number of fragments needed. Additionally, it might be possible to merge some of the McTiny packets with KEMTLS packets to reduce the overall number of round trips. However, these optimisations are left for future work.
+
+
+
 
 
 # Generative AI Disclaimer
