@@ -156,6 +156,8 @@ cabal run kemtls-client
 You should see logs of the server starting up and the client connecting and performing the handshake.
 
 
+The environment variable `KEMTLS_HOST` can be set to change the host the client connects to (default is `127.0.0.1`).
+
 ### Executables
 
 The project provides 3 executables:

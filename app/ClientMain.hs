@@ -25,6 +25,7 @@ main :: IO ()
 main = do
     hSetBuffering stdout LineBuffering
     hSetBuffering stderr LineBuffering
+    host <- fromMaybe "127.0.0.1" <$> lookupEnv "KEMTLS_HOST"
     keypair <- generateKeypair
     -- load server's public key
     serverPK <- readPublicKey pathToServerPublicKey
@@ -37,7 +38,7 @@ main = do
 
     let initialState = Initial {ct = ct}
 
-    runClient (Just "127.0.0.1") "4433" ss serverPK keypair initialState $ do
+    runClient (Just host) "4433" ss serverPK keypair initialState $ do
         putStrLn "Starting KEMTLS client Phase 0..."
         runClientHello
 
