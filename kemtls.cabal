@@ -2,25 +2,9 @@ cabal-version:      2.4
 name:               kemtls
 version:            0.1.0.0
 license:            MIT
-copyright:          2022 Sridhar Ratnakumar
-maintainer:         srid@srid.ca
-author:             Sridhar Ratnakumar
 category:           Web
-homepage:           https://srid.ca/kemtls
-
--- TODO: Before hackage release.
--- A short (one-line) description of the package.
-synopsis:           A template for Haskell projects using Nix
-
--- A longer description of the package.
--- description:
-
--- A URL where users can report bugs.
--- bug-reports:
-
-extra-source-files:
-  LICENSE
-  README.md
+synopsis:           KEMTLS using McTiny as a KEM
+extra-source-files: README.md
 
 common shared
   ghc-options:
@@ -90,7 +74,7 @@ library
     Transcript
     Utils
 
-executable server
+executable kemtls-server
   import:         shared
   main-is:        ServerMain.hs
   ghc-options:    -main-is ServerMain
@@ -98,7 +82,7 @@ executable server
   hs-source-dirs: app
   other-modules:
 
-executable client
+executable kemtls-client
   import:         shared
   main-is:        ClientMain.hs
   build-depends:  kemtls
@@ -106,7 +90,7 @@ executable client
   ghc-options:    -main-is ClientMain
   other-modules:
 
-executable initialise
+executable kemtls-initialise
   import:         shared
   main-is:        InitialiseMain.hs
   hs-source-dirs: app

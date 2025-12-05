@@ -36,13 +36,9 @@ RUN echo "package *" > cabal.project.local && \
 
 COPY *.cabal /app/
 RUN cabal update && \
-    cabal build -j --only-dependencies \
-    --extra-include-dirs=/usr/local/include \
-    --extra-lib-dirs=/usr/local/lib
+    cabal build -j --only-dependencies
 
 COPY . /app
-RUN cabal build all -j \
-    --extra-include-dirs=/usr/local/include \
-    --extra-lib-dirs=/usr/local/lib
+RUN cabal install -j --installdir=/usr/local/bin --overwrite-policy=always
 
 CMD ["bash"]
