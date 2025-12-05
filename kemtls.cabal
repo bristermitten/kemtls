@@ -47,14 +47,10 @@ common shared
     ViewPatterns
 
   build-depends:
-    , aeson
-    , async
     , base               >=4   && <5
-    , base16-bytestring
     , binary
     , bytestring
     , crypton
-    , data-default
     , directory
     , filepath
     , fixed-vector
@@ -62,12 +58,7 @@ common shared
     , mtl
     , network
     , network-transport
-    , optics-core
-    , profunctors
     , relude             >=1.0
-    , shower
-    , time
-    , with-utf8
 
   default-language:   GHC2021
   extra-libraries:    mctiny
