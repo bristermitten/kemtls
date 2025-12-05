@@ -29,7 +29,8 @@ services:
     # delay start slightly to ensure server socket is open
     command: sh -c "sleep 2 && client"
     depends_on:
-      - server
+      server:
+        condition: service_started
     volumes:
       - ./state:/app/state
     networks:

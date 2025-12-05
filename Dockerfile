@@ -43,13 +43,13 @@ WORKDIR /app
 # Copy only the cabal file first. If this hasn't changed, Docker uses cached layer.
 COPY *.cabal /app/
 RUN cabal update && \
-    cabal build --only-dependencies \
+    cabal build -j --only-dependencies \
     --extra-include-dirs=/usr/local/include \
     --extra-lib-dirs=/usr/local/lib
 
 # Now copy source code and build the actual project
 COPY . /app
-RUN cabal build all \
+RUN cabal build all -j \
     --extra-include-dirs=/usr/local/include \
     --extra-lib-dirs=/usr/local/lib
 
