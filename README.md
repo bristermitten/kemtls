@@ -128,7 +128,7 @@ docker-compose up --build
 This should show logs of the `init`, `server`, and `client` services. The `init` service runs first to generate the server static keypair, which is saved to the `state/` directory on the host machine. The server then starts up, loading the static keypair from disk, and finally the client connects to the server and performs the KEMTLS handshake.
 
 #### Manual Setup
-Alternatively, you can build and run the project manually. This requires having GHC and Cabal installed, along with a C compiler for building the McTiny C library. I can't guarantee this will work on all platforms, but it should work on Linux and macOS.
+Alternatively, you can build and run the project manually. This requires having GHC and Cabal installed, along with a C compiler for building the McTiny C library. I can't guarantee this will work on all platforms, or even at all as I've not tested it much.
 
 ```bash
 # build the mctiny C library
@@ -136,9 +136,24 @@ cd mctiny
 make
 cd ..
 
+# make sure the Haskell project can find the mctiny library
+export LD_LIBRARY_PATH=./mctiny:$LD_LIBRARY_PATH
+export DYLD_LIBRARY_PATH=./mctiny:$DYLD_LIBRARY_PATH
+
 # build the Haskell project
 cabal build
+
+# initialise the server static keypair
+cabal run initialise
+
+# start the server (in a separate terminal)
+cabal run server
+
+# start the client (in a separate terminal)
+cabal run client
 ```
+
+You should see logs of the server starting up and the client connecting and performing the handshake.
 
 
 ### Executables
