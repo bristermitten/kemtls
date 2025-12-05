@@ -15,6 +15,7 @@ import Constants
 import Control.Exception.Context qualified as E
 import Control.Monad.Except (throwError)
 import Cookie
+import Data.ByteString qualified as BS
 import Data.Vector.Fixed qualified as Fixed
 import KEMTLS
 import McTiny (McElieceSecretKey, SharedSecret, absorbSyndromeIntoPiece, checkSeed, computePartialSyndrome, createPiece, decap, encryptPacketData, finalizeMcTiny, mctinyHash, seedToE)
@@ -419,13 +420,10 @@ handleDataExchange = do
     (cats, sats) <- lift $ deriveApplicationSecret ss_s ss_e
 
     appData <- lift $ Protocol.recvTLSRecord @ApplicationData conn cats
+    let cleanMsg = BS.takeWhile (/= 0) (SizedBS.toStrictBS appData.adData)
     putStrLn $
         "Received ApplicationData: "
-            <> show
-                ( decodeUtf8 @Text $
-                    SizedBS.toStrictBS
-                        appData.adData
-                )
+            <> show (decodeUtf8 @Text cleanMsg)
 
     -- Echo back the same data
     let echoedData = SizedBS.mkSizedOrError $ toShort $ SizedBS.toStrictBS appData.adData
