@@ -144,13 +144,13 @@ export DYLD_LIBRARY_PATH=./mctiny:$DYLD_LIBRARY_PATH
 cabal build
 
 # initialise the server static keypair
-cabal run initialise
+cabal run kemtls-initialise
 
 # start the server (in a separate terminal)
-cabal run server
+cabal run kemtls-server
 
 # start the client (in a separate terminal)
-cabal run client
+cabal run kemtls-client
 ```
 
 You should see logs of the server starting up and the client connecting and performing the handshake.
@@ -159,12 +159,12 @@ You should see logs of the server starting up and the client connecting and perf
 ### Executables
 
 The project provides 3 executables:
-- `initialise` - Sets up the server static keypair and saves it to disk, emulating a pre-distributed key setup
-- `server` - Runs the KEMTLS server
-- `client` - Runs the KEMTLS client
+- `kemtls-initialise` - Sets up the server static keypair and saves it to disk, emulating a pre-distributed key setup
+- `kemtls-server` - Runs the KEMTLS server
+- `kemtls-client` - Runs the KEMTLS client
 
 These can all be run with `cabal run <executable>`.
-`initialise` must be run first to generate the server static keypair.
+`kemtls-initialise` must be run first to generate the server static keypair.
 
 The server must be started before the client.
 
